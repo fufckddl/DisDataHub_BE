@@ -1,0 +1,16 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://db-postgresql.cjoca4a2yogu.ap-northeast-2.rds.amazonaws.com:5432/postgres
+    username: postgres
+    password: dlckdfuf141
+    driver-class-name: org.postgresql.Driver
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.hub.gisdatahub.user.domain, com.hub.gisdatahub.user.dto
+  configuration:
+    map-underscore-to-camel-case: true
+
+jwt:
+  secret: boardbe-jwt-secret-key-for-learning-example-project-2026
+  expiration: 86400000

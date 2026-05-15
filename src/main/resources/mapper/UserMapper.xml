@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!--
+  DB 컬럼은 snake_case(account_name 등). application.yml의 map-underscore-to-camel-case 로
+  Java 필드 accountName 등에 매핑됩니다.
+-->
+<mapper namespace="com.hub.gisdatahub.user.mapper.UserMapper">
+
+    <select id="findByAccountName" parameterType="String" resultType="User">
+        SELECT
+            user_id AS id,
+            account_name,
+            password,
+            username,
+            role,
+            gender,
+            email,
+            organization,
+            department,
+            status,
+            updated_at,
+            deleted_at,
+            created_at
+        FROM sd_user
+        WHERE account_name = #{accountName}
+    </select>
+
+    <select id="findById" parameterType="int" resultType="User">
+        SELECT
+            user_id AS id,
+            account_name,
+            password,
+            username,
+            role,
+            gender,
+            email,
+            organization,
+            department,
+            status,
+            updated_at,
+            deleted_at,
+            created_at
+        FROM sd_user
+        WHERE user_id = #{id}
+    </select>
+
+    <insert id="joinUser" parameterType="User">
+        INSERT INTO sd_user (
+            account_name, password, username, role, gender, email, organization, department, status
+        )
+        VALUES (
+            #{accountName},
+            #{password},
+            #{username},
+            CAST(#{role} AS sd_user_role),
+            #{gender},
+            #{email},
+            #{organization},
+            #{department},
+            CAST(#{status} AS sd_user_status)
+        )
+    </insert>
+
+</mapper>
