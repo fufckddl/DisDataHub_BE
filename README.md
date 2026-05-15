@@ -1,2 +1,2 @@
-# DisDataHub
+# DisDataHub_BE
 중앙정보처리기술원 2차 프로젝트(선도소프트) 2팀
