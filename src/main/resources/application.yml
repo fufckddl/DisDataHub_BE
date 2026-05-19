@@ -14,3 +14,14 @@ mybatis:
 jwt:
   secret: ${JWT_SECRET}
   expiration: ${JWT_EXPIRATION}
+
+seoul:
+  open-api:
+    key: ${SEOUL_OPENDATA_KEY:}
+    base-url: http://openapi.seoul.go.kr:8088
+    district-living-population-service-name: SPOP_LOCAL_RESD_PPLTN
+    air-quality-start: 1
+    air-quality-end: 25
+    district-living-population-start: 1
+    district-living-population-end: 1000
+  

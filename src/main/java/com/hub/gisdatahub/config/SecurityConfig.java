@@ -64,6 +64,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // 회원가입, 로그인은 토큰 없이 사용 가능
                         .requestMatchers(HttpMethod.POST, "/api/users/join", "/api/users/login").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/open-data/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/dashboard/**").permitAll()
+                        .requestMatchers("/error").permitAll()
                         // 게시글 목록·상세 조회는 비로그인도 가능
                         // NOTE: 일부 환경에서 requestMatchers(HttpMethod.GET, "/api/articles/**")가 "/api/articles/{id}"에 매칭되지 않는 이슈가 있어
                         // AntPathRequestMatcher로 명시합니다.
@@ -75,7 +78,7 @@ public class SecurityConfig {
                 )
                 .cors(cors -> cors.configurationSource(request -> {
                     CorsConfiguration config = new CorsConfiguration();
-                    config.setAllowedOrigins(List.of("http://localhost:5173"));
+                    config.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:5174"));
                     config.setAllowedMethods(List.of("*"));
                     config.setAllowedHeaders(List.of("*"));
                     config.setAllowCredentials(true);

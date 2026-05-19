@@ -9,3 +9,9 @@ spring:
 jwt:
   secret: test-jwt-secret-key-for-unit-tests-32b!
   expiration: 86400000
+
+seoul:
+  open-api:
+    key: test-seoul-key
+    base-url: http://openapi.seoul.go.kr:8088
+    district-living-population-service-name: SPOP_LOCAL_RESD_PPLTN
