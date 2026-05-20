@@ -15,3 +15,10 @@ seoul:
     key: test-seoul-key
     base-url: http://openapi.seoul.go.kr:8088
     district-living-population-service-name: SPOP_LOCAL_RESD_PPLTN
+
+aws:
+  region: ap-northeast-2
+  s3:
+    bucket: test-bucket
+    access-key-id: test-access-key
+    secret-access-key: test-secret-key
