@@ -65,6 +65,7 @@ public class SecurityConfig {
                         // 회원가입, 로그인은 토큰 없이 사용 가능
                         .requestMatchers(HttpMethod.POST, "/api/users/join", "/api/users/login").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/open-data/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/opendata/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/dashboard/**").permitAll()
                         .requestMatchers("/error").permitAll()
                         // 게시글 목록·상세 조회는 비로그인도 가능
