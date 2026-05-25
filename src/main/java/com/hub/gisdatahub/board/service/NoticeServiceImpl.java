@@ -1,5 +1,5 @@
 package com.hub.gisdatahub.board.service;
 
-public interface NoticeService {
+public class NoticeServiceImpl {
 
 }
