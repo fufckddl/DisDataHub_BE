@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.hub.gisdatahub.dashboard.mapper.DashboardPopulationMapper">
+
+    <select id="findAreaPopulation" resultType="com.hub.gisdatahub.dashboard.dto.AreaPopulationDto">
+        SELECT
+            p.population_id,
+            p.area_code,
+            c.name AS area_name,
+            c.full_name,
+            p.source_code,
+            p.base_date,
+            p.hour,
+            p.total_population,
+            p.male_population,
+            p.female_population,
+            p.male_0_9,
+            p.male_10_14,
+            p.male_15_19,
+            p.male_20_24,
+            p.male_25_29,
+            p.male_30_34,
+            p.male_35_39,
+            p.male_40_44,
+            p.male_45_49,
+            p.male_50_54,
+            p.male_55_59,
+            p.male_60_64,
+            p.male_65_69,
+            p.male_70_74,
+            p.female_0_9,
+            p.female_10_14,
+            p.female_15_19,
+            p.female_20_24,
+            p.female_25_29,
+            p.female_30_34,
+            p.female_35_39,
+            p.female_40_44,
+            p.female_45_49,
+            p.female_50_54,
+            p.female_55_59,
+            p.female_60_64,
+            p.female_65_69,
+            p.female_70_74,
+            p.metadata::text AS metadata,
+            p.created_at,
+            p.updated_at
+        FROM public.sd_area_population p
+        JOIN public.sd_area_code c
+            ON c.area_code = p.area_code
+        WHERE p.area_code = #{areaCode}
+        <if test="baseDate != null">
+            AND p.base_date = #{baseDate}
+        </if>
+        <if test="hour != null and hour != ''">
+            AND p.hour = #{hour}
+        </if>
+        ORDER BY p.base_date DESC, p.hour DESC
+        LIMIT 1
+    </select>
+
+</mapper>

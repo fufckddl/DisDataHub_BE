@@ -41,6 +41,46 @@ public class DataCollectService {
         this.objectMapper = objectMapper;
     }
 
+    // 스케줄러에서 하루 1회 호출하는 수집 진입점입니다.
+    // OpenAPI 응답은 즉시 DB에 저장하고, 대시보드 화면은 이 DB 데이터만 조회합니다.
+    public int collectDailySeoulSigunguLivingPopulation() {
+        return collectSeoulSigunguLivingPopulation(null, "00");
+    }
+
+    // 수동 테스트 또는 재수집이 필요할 때 특정 기준일/시간으로 서울 자치구 생활인구를 일괄 수집합니다.
+    public int collectSeoulSigunguLivingPopulation(String date, String hour) {
+        String requestHour = resolveHour(hour);
+
+        if (date != null && !date.isBlank()) {
+            validateBasicDate(date);
+            return collectSeoulSigunguLivingPopulationByDate(date, requestHour);
+        }
+
+        LocalDate today = LocalDate.now(SEOUL_ZONE);
+        for (int daysAgo = 1; daysAgo <= RECENT_DATA_LOOKBACK_DAYS; daysAgo++) {
+            String requestDate = today.minusDays(daysAgo).format(BASIC_DATE);
+            int savedCount = collectSeoulSigunguLivingPopulationByDate(requestDate, requestHour);
+            if (savedCount > 0) {
+                return savedCount;
+            }
+        }
+
+        return 0;
+    }
+
+    private int collectSeoulSigunguLivingPopulationByDate(String date, String hour) {
+        int savedCount = 0;
+        for (String sigunguCode : seoulPopulationMapper.findSeoulSigunguApiCodes()) {
+            String result = dataCollectClient.callLivingPopulationBySigungu(
+                date,
+                hour,
+                sigunguCode
+            );
+            savedCount += saveLivingPopulation(result, LIVING_POPULATION_SIGUNGU);
+        }
+        return savedCount;
+    }
+
     public String getLivingPopulationByDong(String date, String hour, String areaCode){
         String requestHour = resolveHour(hour);
 
@@ -138,13 +178,14 @@ public class DataCollectService {
         return responseBody != null && responseBody.contains("\"CODE\":\"INFO-000\"");
     }
 
-    private void saveLivingPopulation(String responseBody, String sourceCode) {
+    private int saveLivingPopulation(String responseBody, String sourceCode) {
         if (!hasSeoulOpenApiData(responseBody)) {
-            return;
+            return 0;
         }
 
-        parseLivingPopulationRows(responseBody, sourceCode)
-            .forEach(seoulPopulationMapper::upsert);
+        List<SeoulPopulationRow> rows = parseLivingPopulationRows(responseBody, sourceCode);
+        rows.forEach(seoulPopulationMapper::upsert);
+        return rows.size();
     }
 
     private List<SeoulPopulationRow> parseLivingPopulationRows(String responseBody, String sourceCode) {

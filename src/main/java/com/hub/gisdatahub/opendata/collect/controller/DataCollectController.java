@@ -1,5 +1,7 @@
 package com.hub.gisdatahub.opendata.collect.controller;
 
+import java.util.Map;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,24 +19,17 @@ public class DataCollectController {
     @Autowired
     private DataCollectService dataCollectService;
 
-    // 서울 인구 정보 가져오기
-    @GetMapping("/living-population/dong")
-    public String getLivingPopulationByDong(
+    // 스케줄러와 동일한 방식으로 서울 자치구 생활인구를 OpenAPI에서 수집해 DB에 저장합니다.
+    @PostMapping("/living-population/sigungu/collect")
+    public ResponseEntity<Map<String, Object>> collectLivingPopulationBySigungu(
         @RequestParam(required = false) String date,
-        @RequestParam(defaultValue = "00") String hour,
-        @RequestParam String areaCode
-    ){
-        return dataCollectService.getLivingPopulationByDong(date, hour, areaCode);
-    }
-
-    // 서울 자치구 인구 정보 가져오기
-    @GetMapping("/living-population/sigungu")
-    public String getLivingPopulationBySigungu(
-        @RequestParam(required = false) String date,
-        @RequestParam(defaultValue = "00") String hour,
-        @RequestParam String sigunguCode
-    ){
-        return dataCollectService.getLivingPopulationBySigungu(date, hour, sigunguCode);
+        @RequestParam(defaultValue = "00") String hour
+    ) {
+        int savedCount = dataCollectService.collectSeoulSigunguLivingPopulation(date, hour);
+        return ResponseEntity.ok(Map.of(
+            "target", "SPOP_LOCAL_RESD_JACHI",
+            "savedCount", savedCount
+        ));
     }
 
     // 서울 유동 인구
@@ -46,6 +41,6 @@ public class DataCollectController {
         @RequestParam(required = false) String date
     ){
         return dataCollectService.getSdotVisitorCount(start, end, district, date);
-
     }
+
 }

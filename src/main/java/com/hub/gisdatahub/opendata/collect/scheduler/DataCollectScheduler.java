@@ -1,0 +1,21 @@
+package com.hub.gisdatahub.opendata.collect.scheduler;
+
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+import com.hub.gisdatahub.opendata.collect.service.DataCollectService;
+
+@Component
+public class DataCollectScheduler {
+
+    private final DataCollectService dataCollectService;
+
+    public DataCollectScheduler(DataCollectService dataCollectService) {
+        this.dataCollectService = dataCollectService;
+    }
+
+    @Scheduled(cron = "${seoul.open-api.living-population-collect-cron:0 0 3 * * *}", zone = "Asia/Seoul")
+    public void collectDailySeoulSigunguLivingPopulation() {
+        dataCollectService.collectDailySeoulSigunguLivingPopulation();
+    }
+}
