@@ -1,5 +1,14 @@
 package com.hub.gisdatahub.board.mapper;
 
-public class NoticeSqlMapper {
+import java.util.List;
 
+import org.apache.ibatis.annotations.Mapper;
+
+import com.hub.gisdatahub.board.dto.BoardPostDto;
+
+@Mapper
+public interface NoticeSqlMapper {
+    // 공지사항 게시글 목록조회
+    public List<BoardPostDto> findByNoticeList();
 }
+
