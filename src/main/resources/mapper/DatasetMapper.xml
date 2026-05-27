@@ -1,0 +1,342 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.hub.gisdatahub.dataset.mapper.DatasetMapper">
+
+    <insert id="insertDataset" parameterType="DatasetUploadDto" 
+            useGeneratedKeys="true" keyProperty="datasetId" keyColumn="dataset_id">
+        INSERT INTO sd_gis_dataset (
+            created_by, title, 
+            description, 
+            provider, 
+            source_type, 
+            spatial_type, 
+            file_format, 
+            original_srid, 
+            storage_srid,
+            analysis_srid,
+            is_spatial, 
+            is_public,
+            category_id,
+            status,
+            created_at
+        )
+        VALUES (
+            #{createdBy}, #{title}, 
+            #{description}, 
+            #{provider}, 
+            #{sourceType}, 
+            #{spatialType}, 
+            #{fileFormat}, 
+            #{originalSrid}, 
+            4326,          
+            5179,          
+            <choose>
+                <when test="spatialType == 'NONE'">false</when>
+                <otherwise>true</otherwise>
+            </choose>,
+            #{isPublic},
+            #{categoryId},
+            'VALIDATING',  
+            now()
+        )
+    </insert>
+
+    <insert id="insertMetadata" parameterType="DatasetUploadDto">
+        INSERT INTO sd_gis_dataset_metadata (
+            dataset_id, 
+            keywords,
+            data_start_date,
+            data_end_date,
+            temporal_coverage,
+            spatial_coverage,
+            update_cycle,
+            license,
+            quality_grade,
+            quality_description,
+            contact_person,
+            contact_email,
+            extra_metadata,
+            created_at
+        )
+        VALUES (
+            #{datasetId}, 
+            
+            <choose>
+                <when test="keywords != null and keywords != ''">string_to_array(#{keywords}, ',')</when>
+                <otherwise>null</otherwise>
+            </choose>,
+            
+            <choose>
+                <when test="dataStartDate != null and dataStartDate != ''">CAST(#{dataStartDate} AS DATE)</when>
+                <otherwise>null</otherwise>
+            </choose>,
+            <choose>
+                <when test="dataEndDate != null and dataEndDate != ''">CAST(#{dataEndDate} AS DATE)</when>
+                <otherwise>null</otherwise>
+            </choose>,
+            
+            #{temporalCoverage},
+            #{spatialCoverage},
+            #{updateCycle},
+            #{license},
+            #{qualityGrade},
+            #{qualityDescription},
+            #{contactPerson},
+            #{contactEmail},
+            
+            <choose>
+                <when test="extraMetadata != null and extraMetadata != ''">CAST(#{extraMetadata} AS JSONB)</when>
+                <otherwise>null</otherwise>
+            </choose>,
+            now()
+        )
+    </insert>
+
+    <insert id="insertUploadLog" parameterType="DatasetUploadDto"
+            useGeneratedKeys="true" keyProperty="uploadId" keyColumn="upload_id">
+        INSERT INTO sd_upload_log (
+            dataset_id,
+            user_id,
+            upload_status,
+            validation_status,
+            started_at
+        )
+        VALUES (
+            #{datasetId}, #{createdBy}, 'UPLOADING', 'VALIDATING', now())
+    </insert>
+
+    <insert id="insertDatasetFile" parameterType="DatasetUploadDto">
+        INSERT INTO sd_gis_dataset_file (
+            dataset_id,
+            original_filename,
+            stored_filename,
+            file_extension,
+            file_size,
+            mime_type,
+            encoding,
+            file_role,
+            checksum,
+            file_path,
+            created_at
+        )
+        VALUES (
+            #{datasetId}, 
+            #{originalFilename}, 
+            '', 
+            #{fileExtension}, 
+            #{fileSize}, 
+            #{mimeType}, 
+            #{encoding}, 
+            'ORIGINAL', 
+            #{checksum}, 
+            '', 
+            now()
+        )
+    </insert>
+
+    <update id="updateFileInfo" parameterType="DatasetUploadDto">
+        UPDATE sd_gis_dataset_file
+        SET stored_filename = #{storedFilename},
+            file_path = #{filePath},
+            checksum = #{checksum}  WHERE dataset_id = #{datasetId}
+    </update>
+
+    <insert id="bulkInsertTempFeatures" parameterType="java.util.List">
+        INSERT INTO sd_upload_temp_feature (
+            upload_id,
+            row_number,
+            feature_name,
+            raw_longitude,
+            raw_latitude,
+            raw_wkt,
+            spatial_type,
+            raw_data,
+            validation_status
+        )
+        VALUES
+        <foreach collection="list" item="item" separator=",">
+        (
+            #{item.uploadId},
+            #{item.rowNumber},
+            #{item.featureName},
+            #{item.rawLongitude},
+            #{item.rawLatitude},
+            #{item.rawWkt},
+            #{item.spatialType},
+            CAST(#{item.rawData} AS jsonb), #{item.validationStatus}
+        )
+        </foreach>
+    </insert>
+
+    <update id="updateUploadStatusToProcessing">
+        UPDATE sd_upload_log
+        SET upload_status = 'PROCESSING',
+            total_count = #{totalCount, jdbcType=INTEGER} 
+        WHERE upload_id = #{uploadId}
+    </update>
+
+    <select id="countByChecksum" parameterType="string" resultType="int">
+        SELECT COUNT(*) 
+        FROM sd_gis_dataset_file 
+        WHERE checksum = #{checksum}
+    </select>
+
+    <select id="findPendingApprovals" resultType="AdminApprovalResponseDto">
+        SELECT 
+            d.dataset_id,
+            u.username,
+            u.organization,
+            d.title,
+            l.success_count,
+            d.created_at,
+            d.status
+        FROM sd_gis_dataset d
+        INNER JOIN sd_user u ON d.created_by = u.user_id
+        INNER JOIN sd_upload_log l ON d.dataset_id = l.dataset_id
+        WHERE d.status = 'REQUEST'
+        ORDER BY d.created_at desc
+    </select>
+
+    <select id="selectApprovalDetailById" resultType="AdminApprovalDetailResponseDto">
+        SELECT 
+            d.dataset_id AS datasetId,
+            u.username AS username,
+            u.organization AS organization,
+            d.title AS title,
+            COALESCE(l.success_count, 0) AS successCount,
+            TO_CHAR(d.created_at, 'YYYY-MM-DD HH24:MI') AS createdAt
+        FROM 
+            sd_gis_dataset d
+        JOIN 
+            sd_user u ON d.created_by = u.user_id
+        LEFT JOIN 
+            sd_upload_log l ON d.dataset_id = l.dataset_id
+        WHERE 
+            d.dataset_id = #{datasetId}
+        ORDER BY 
+            l.upload_id DESC
+        LIMIT 1
+    </select>
+
+
+
+    <select id="selectLatestUploadIdByDatasetId" resultType="java.lang.Long">
+        SELECT upload_id 
+        FROM sd_upload_log 
+        WHERE dataset_id = #{datasetId} 
+        ORDER BY upload_id DESC 
+        LIMIT 1
+    </select>
+
+    <select id="selectStoredFilenameByDatasetId" resultType="string">
+        SELECT stored_filename 
+        FROM sd_gis_dataset_file 
+        WHERE dataset_id = #{datasetId}
+    </select>
+
+    <update id="updateDatasetFilePath">
+        UPDATE sd_gis_dataset_file
+        SET file_path = #{newFilePath}
+        WHERE dataset_id = #{datasetId}
+    </update>
+
+    <insert id="bulkInsertFeaturesFromTemp">
+        INSERT INTO sd_gis_feature (
+            dataset_id,
+            feature_name,
+            spatial_type,
+            properties,
+            geom_4326,
+            geom_5179,
+            created_at
+        )
+        SELECT 
+            #{datasetId},
+            feature_name,
+            spatial_type,
+            raw_data,
+            geom_4326,
+            ST_Transform(geom_4326, 5179),
+            NOW()
+        FROM sd_upload_temp_feature
+        WHERE upload_id = #{uploadId}
+            AND validation_status = 'VALID'
+    </insert>
+
+    <delete id="deleteTempFeaturesByUploadId">
+        DELETE FROM sd_upload_temp_feature
+        WHERE upload_id = #{uploadId}
+    </delete>
+
+    <update id="updateUploadLogStatusCompleted">
+        UPDATE sd_upload_log
+        SET upload_status = 'COMPLETED',
+            import_status = 'COMPLETED',
+            finished_at = NOW()
+        WHERE upload_id = #{uploadId}
+    </update>
+
+    <update id="updateDatasetStatusApproved">
+        UPDATE sd_gis_dataset
+        SET status = 'APPROVED',
+            approved_by = #{adminUserId},
+            approved_at = NOW(),
+            updated_at = NOW()
+        WHERE dataset_id = #{datasetId}
+    </update>
+
+    <select id="selectDatasetStatusById" resultType="string">
+        SELECT status FROM sd_gis_dataset WHERE dataset_id = #{datasetId}
+    </select>
+
+    <insert id="insertDatasetRejection">
+        INSERT INTO sd_dataset_rejection (dataset_id, rejected_by, reject_reason, rejected_at)
+        VALUES (#{datasetId}, #{adminUserId}, #{rejectReason}, NOW())
+    </insert>
+
+    <update id="updateUploadLogStatusRejected">
+        UPDATE sd_upload_log
+        SET upload_status = 'REJECTED',
+            validation_status = 'REJECTED',
+            finished_at = NOW()
+        WHERE upload_id = #{uploadId}
+    </update>
+
+    <update id="clearDatasetFileInfo">
+        UPDATE sd_gis_dataset_file
+        SET stored_filename = '',
+            file_path = ''
+        WHERE dataset_id = #{datasetId}
+    </update>
+
+    <update id="updateDatasetStatusRejected">
+        UPDATE sd_gis_dataset
+        SET status = 'REJECTED',
+            updated_at = NOW()
+        WHERE dataset_id = #{datasetId}
+    </update>
+
+    <select id="selectMyUploadList" resultType="MyUploadResponseDto">
+        SELECT
+            d.dataset_id AS datasetId,
+            d.title AS title,
+            c.category_name_ko AS category,
+            d.file_format AS fileFormat,
+            d.status AS status,
+            TO_CHAR(d.created_at, 'YYYY-MM-DD HH24:MI') AS createdAt,
+            u.username AS "rejectionDetails.adminName",
+            r.reject_reason AS "rejectionDetails.rejectReason",
+            TO_CHAR(r.rejected_at, 'YYYY-MM-DD HH24:MI') AS "rejectionDetails.rejectedAt"
+        FROM sd_gis_dataset d
+        LEFT JOIN sd_data_category c 
+            ON d.category_id = c.category_id
+        LEFT JOIN sd_dataset_rejection r 
+            ON d.dataset_id = r.dataset_id
+        LEFT JOIN sd_user u 
+            ON r.rejected_by = u.user_id
+        WHERE d.created_by = #{userId}
+        AND d.status IN ('REQUEST', 'APPROVED', 'REJECTED')
+        ORDER BY d.created_at DESC
+    </select>
+</mapper>
