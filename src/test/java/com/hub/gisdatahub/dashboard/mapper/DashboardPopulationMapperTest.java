@@ -16,11 +16,17 @@ import org.mybatis.spring.boot.test.autoconfigure.MybatisTest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.TestPropertySource;
 
 import com.hub.gisdatahub.dashboard.dto.AreaPopulationDto;
 
 @MybatisTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
+@TestPropertySource(properties = {
+        "mybatis.mapper-locations=classpath:mapper/DashboardPopulationMapper.xml",
+        "mybatis.type-aliases-package=com.hub.gisdatahub.dashboard.dto",
+        "mybatis.configuration.map-underscore-to-camel-case=true"
+})
 class DashboardPopulationMapperTest {
 
     private final DashboardPopulationMapper dashboardPopulationMapper;

@@ -28,4 +28,3 @@ aws:
     bucket: test-bucket
     access-key-id: test-access-key
     secret-access-key: test-secret-key
-
