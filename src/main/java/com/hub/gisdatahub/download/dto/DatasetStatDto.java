@@ -8,9 +8,9 @@ import lombok.Data;
 @Data
 public class DatasetStatDto {
 
-    private Integer datasetId;
+    private Long datasetId;
     private Integer viewCount;
     private Integer downloadCount;
-    private LocalDateTime updateAt;
+    private LocalDateTime updatedAt;
     private LocalDateTime createdAt;
 }
