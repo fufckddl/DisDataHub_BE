@@ -6,4 +6,6 @@ import com.hub.gisdatahub.board.dto.BoardPostDto;
 
 public interface NoticeService {
     public List<BoardPostDto> getNoticeList();
+
+    public BoardPostDto getNoticeDetailData(Long postId);
 }

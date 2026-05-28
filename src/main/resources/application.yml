@@ -7,7 +7,7 @@ spring:
 
 mybatis:
   mapper-locations: classpath:mapper/*.xml
-  type-aliases-package: com.hub.gisdatahub.user.domain, com.hub.gisdatahub.user.dto
+  type-aliases-package: com.hub.gisdatahub
   configuration:
     map-underscore-to-camel-case: true
 
