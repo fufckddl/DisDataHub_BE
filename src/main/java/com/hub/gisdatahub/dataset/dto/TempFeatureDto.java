@@ -15,9 +15,6 @@ public class TempFeatureDto {
     // ==========================================
     // 2. 원본 데이터 구역 (CSV에서 갓 꺼낸 날 것의 데이터)
     // ==========================================
-    private String rawName;          // 사용 X
-    private String rawCode;          // 사용 X
-    private String rawCategory;      // 사용 X
     private Double rawLongitude;     // 원본 경도 (X)
     private Double rawLatitude;      // 원본 위도 (Y)
     private String rawWkt;           // 원본 공간 텍스트 (예: POINT(127.123 37.123))
@@ -27,8 +24,6 @@ public class TempFeatureDto {
     // 3. 정제 데이터 구역 (자바 검증 로직을 통과한 깨끗한 데이터)
     // ==========================================
     private String featureName;      // 정제된 이름
-    private String featureCode;      // 사용 X
-    private String category;         // 사용 X
     private String spatialType;      // 공간 타입 (POINT, POLYGON 등)
     
     // 마이바티스에서 ST_GeomFromText() 함수를 쓰기 위해 자바에서는 텍스트(WKT)로 들고 있습니다.
