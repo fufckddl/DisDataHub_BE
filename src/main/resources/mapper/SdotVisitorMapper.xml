@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.hub.gisdatahub.opendata.collect.mapper.SdotVisitorMapper">
+
+    <select id="findAreaCodeBySourceNames" resultType="string">
+        SELECT area_code
+        FROM public.sd_area_name_alias
+        WHERE source_code = #{sourceCode}
+          AND source_sigungu_name = #{sourceSigunguName}
+          AND (
+              source_eupmyeondong_name = #{sourceEupmyeondongName}
+              OR source_eupmyeondong_name = '__ALL__'
+          )
+        ORDER BY
+            CASE
+                WHEN source_eupmyeondong_name = #{sourceEupmyeondongName} THEN 0
+                ELSE 1
+            END
+        LIMIT 1
+    </select>
+
+    <insert id="upsert" parameterType="com.hub.gisdatahub.opendata.collect.dto.seoul.SdotVisitorRow">
+        INSERT INTO public.sd_area_floating_population (
+            area_code,
+            source_code,
+            base_date,
+            hour,
+            sensing_time,
+            registered_at,
+            model_name,
+            serial_no,
+            region,
+            autonomous_district,
+            administrative_district,
+            visitor_count,
+            metadata,
+            created_at,
+            updated_at
+        )
+        VALUES (
+            #{areaCode},
+            #{sourceCode},
+            #{baseDate},
+            #{hour},
+            #{sensingTime},
+            #{registeredAt},
+            #{modelName},
+            #{serialNo},
+            #{region},
+            #{autonomousDistrict},
+            #{administrativeDistrict},
+            #{visitorCount},
+            CAST(#{metadata} AS jsonb),
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (source_code, serial_no, sensing_time)
+        DO UPDATE SET
+            area_code = EXCLUDED.area_code,
+            base_date = EXCLUDED.base_date,
+            hour = EXCLUDED.hour,
+            registered_at = EXCLUDED.registered_at,
+            model_name = EXCLUDED.model_name,
+            region = EXCLUDED.region,
+            autonomous_district = EXCLUDED.autonomous_district,
+            administrative_district = EXCLUDED.administrative_district,
+            visitor_count = EXCLUDED.visitor_count,
+            metadata = EXCLUDED.metadata,
+            updated_at = CURRENT_TIMESTAMP
+    </insert>
+
+</mapper>

@@ -64,6 +64,10 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // 회원가입, 로그인은 토큰 없이 사용 가능
                         .requestMatchers(HttpMethod.POST, "/api/users/join", "/api/users/login").permitAll()
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/opendata/collect/living-population/sigungu/collect",
+                                "/api/opendata/collect/sdot/visitor/collect").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/open-data/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/opendata/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/dashboard/**").permitAll()

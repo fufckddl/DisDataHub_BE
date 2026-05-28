@@ -32,6 +32,19 @@ public class DataCollectController {
         ));
     }
 
+    // 스케줄러와 동일한 방식으로 서울 S-DoT 유동인구를 OpenAPI에서 수집해 DB에 저장합니다.
+    @PostMapping("/sdot/visitor/collect")
+    public ResponseEntity<Map<String, Object>> collectSdotVisitorCount(
+        @RequestParam(defaultValue = "1") int start,
+        @RequestParam(defaultValue = "1000") int end
+    ) {
+        int savedCount = dataCollectService.collectSdotVisitorCount(start, end);
+        return ResponseEntity.ok(Map.of(
+            "target", "IotVdata018",
+            "savedCount", savedCount
+        ));
+    }
+
     // 서울 유동 인구
     @GetMapping("/sdot/visitor")
     public String getSdotVisitorCount(

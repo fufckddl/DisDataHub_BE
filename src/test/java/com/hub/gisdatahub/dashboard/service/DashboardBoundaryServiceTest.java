@@ -77,12 +77,12 @@ class DashboardBoundaryServiceTest {
                 .female70To74(new BigDecimal("28.1"))
                 .build();
 
-        when(populationMapper.findAreaPopulation("11110", baseDate, "03"))
+        when(populationMapper.findAreaPopulation("11110", "SIGUNGU", baseDate, "03"))
                 .thenReturn(population);
 
         AreaPopulationChartResponse response = service.getAreaPopulation(" 11110 ", "2026-05-20", "3");
 
-        verify(populationMapper).findAreaPopulation("11110", baseDate, "03");
+        verify(populationMapper).findAreaPopulation("11110", "SIGUNGU", baseDate, "03");
         assertThat(response.getLabels()).containsExactly(
                 "0-9", "10-14", "15-19", "20-24", "25-29", "30-34", "35-39",
                 "40-44", "45-49", "50-54", "55-59", "60-64", "65-69", "70-74");
@@ -111,7 +111,7 @@ class DashboardBoundaryServiceTest {
                 .female70To74(new BigDecimal("2"))
                 .build();
 
-        when(populationMapper.findAreaPopulation("11110", null, null)).thenReturn(population);
+        when(populationMapper.findAreaPopulation("11110", "SIGUNGU", null, null)).thenReturn(population);
 
         AreaPopulationChartResponse response = service.getAreaPopulation("11110", null, null);
 
@@ -127,5 +127,27 @@ class DashboardBoundaryServiceTest {
                         BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                         BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                         BigDecimal.ZERO, new BigDecimal("2"));
+    }
+
+    @Test
+    void getAreaPopulationAcceptsJipgyeguLevel() {
+        AreaPopulationDto population = AreaPopulationDto.builder()
+                .areaCode("1101053010001")
+                .areaName("집계구")
+                .fullName("서울특별시 종로구 사직동 집계구")
+                .build();
+
+        when(populationMapper.findAreaPopulation("1101053010001", "JIPGYEGU", null, null))
+                .thenReturn(population);
+
+        AreaPopulationChartResponse response = service.getAreaPopulation(
+                "1101053010001",
+                "JIPGYEGU",
+                null,
+                null);
+
+        verify(populationMapper).findAreaPopulation("1101053010001", "JIPGYEGU", null, null);
+        assertThat(response.getAreaCode()).isEqualTo("1101053010001");
+        assertThat(response.getFullName()).isEqualTo("서울특별시 종로구 사직동 집계구");
     }
 }

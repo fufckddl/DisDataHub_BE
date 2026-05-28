@@ -47,8 +47,12 @@ class DashboardPopulationMapperTest {
         jdbcTemplate.execute("""
                 CREATE TABLE public.sd_area_code (
                     area_code VARCHAR(20) PRIMARY KEY,
+                    sido_code VARCHAR(10),
+                    sigungu_code VARCHAR(10),
+                    eupmyeondong_code VARCHAR(20),
                     name VARCHAR(100) NOT NULL,
-                    full_name VARCHAR(200) NOT NULL
+                    full_name VARCHAR(200) NOT NULL,
+                    level VARCHAR(20) NOT NULL
                 )
                 """);
         jdbcTemplate.execute("""
@@ -96,8 +100,12 @@ class DashboardPopulationMapperTest {
                 """);
 
         jdbcTemplate.update(
-                "INSERT INTO public.sd_area_code (area_code, name, full_name) VALUES (?, ?, ?)",
-                "11010", "종로구", "서울특별시 종로구");
+                """
+                INSERT INTO public.sd_area_code
+                    (area_code, sido_code, sigungu_code, eupmyeondong_code, name, full_name, level)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                "11010", "11", "11010", "11010000", "종로구", "서울특별시 종로구", "SIGUNGU");
 
         jdbcTemplate.update("""
                 INSERT INTO public.sd_area_population (
@@ -133,6 +141,7 @@ class DashboardPopulationMapperTest {
     void findAreaPopulationMapsNumberedAgeColumnsToDtoFields() {
         AreaPopulationDto result = dashboardPopulationMapper.findAreaPopulation(
                 "11010",
+                "SIGUNGU",
                 LocalDate.of(2026, 5, 26),
                 "03");
 
