@@ -6,18 +6,50 @@
 
     <select id="findAreaCodeBySourceNames" resultType="string">
         SELECT area_code
-        FROM public.sd_area_name_alias
-        WHERE source_code = #{sourceCode}
-          AND source_sigungu_name = #{sourceSigunguName}
-          AND (
-              source_eupmyeondong_name = #{sourceEupmyeondongName}
-              OR source_eupmyeondong_name = '__ALL__'
-          )
-        ORDER BY
-            CASE
-                WHEN source_eupmyeondong_name = #{sourceEupmyeondongName} THEN 0
-                ELSE 1
-            END
+        FROM (
+            SELECT
+                area_code,
+                CASE
+                    WHEN source_eupmyeondong_name = #{sourceEupmyeondongName} THEN 0
+                    ELSE 1
+                END AS match_priority
+            FROM public.sd_area_name_alias
+            WHERE source_code = #{sourceCode}
+              AND source_sigungu_name = #{sourceSigunguName}
+              AND (
+                  source_eupmyeondong_name = #{sourceEupmyeondongName}
+                  OR source_eupmyeondong_name = '__ALL__'
+              )
+
+            UNION ALL
+
+            SELECT
+                dong.area_code,
+                2 AS match_priority
+            FROM public.sd_area_code dong
+            JOIN public.sd_area_code sigungu
+                ON sigungu.level = 'SIGUNGU'
+               AND sigungu.sido_code = dong.sido_code
+               AND sigungu.sigungu_code = dong.sigungu_code
+               AND sigungu.is_active = TRUE
+            WHERE dong.level = 'EUPMYEONDONG'
+              AND dong.is_active = TRUE
+              AND dong.sido_code = '11'
+              AND sigungu.name = #{sourceSigunguName}
+              AND dong.name = #{sourceEupmyeondongName}
+
+            UNION ALL
+
+            SELECT
+                sigungu.area_code,
+                3 AS match_priority
+            FROM public.sd_area_code sigungu
+            WHERE sigungu.level = 'SIGUNGU'
+              AND sigungu.is_active = TRUE
+              AND sigungu.sido_code = '11'
+              AND sigungu.name = #{sourceSigunguName}
+        ) candidates
+        ORDER BY match_priority, area_code
         LIMIT 1
     </select>
 

@@ -14,8 +14,54 @@
                 name,
                 full_name,
                 COALESCE(#{areaLevel}, level) AS selected_level
-            FROM public.sd_area_code
-            WHERE area_code = #{areaCode}
+            FROM (
+                SELECT
+                    c.*,
+                    CASE
+                        WHEN c.area_code = #{areaCode} THEN 0
+                        WHEN LENGTH(#{areaCode}) = 5
+                             AND c.level = 'SIGUNGU'
+                             AND c.sigungu_code = #{areaCode} THEN 1
+                        WHEN LENGTH(#{areaCode}) = 10
+                             AND SUBSTRING(#{areaCode}, 6, 5) = '00000'
+                             AND c.level = 'SIGUNGU'
+                             AND c.sigungu_code = SUBSTRING(#{areaCode}, 1, 5) THEN 2
+                        WHEN LENGTH(#{areaCode}) = 8
+                             AND c.level = 'EUPMYEONDONG'
+                             AND c.eupmyeondong_code = #{areaCode} THEN 3
+                        WHEN LENGTH(#{areaCode}) = 10
+                             AND SUBSTRING(#{areaCode}, 9, 2) = '00'
+                             AND c.level = 'EUPMYEONDONG'
+                             AND c.eupmyeondong_code = SUBSTRING(#{areaCode}, 1, 8) THEN 4
+                        ELSE 9
+                    END AS match_priority
+                FROM public.sd_area_code c
+                WHERE c.area_code = #{areaCode}
+                   OR (
+                       LENGTH(#{areaCode}) = 5
+                       AND c.level = 'SIGUNGU'
+                       AND c.sigungu_code = #{areaCode}
+                   )
+                   OR (
+                       LENGTH(#{areaCode}) = 10
+                       AND SUBSTRING(#{areaCode}, 6, 5) = '00000'
+                       AND c.level = 'SIGUNGU'
+                       AND c.sigungu_code = SUBSTRING(#{areaCode}, 1, 5)
+                   )
+                   OR (
+                       LENGTH(#{areaCode}) = 8
+                       AND c.level = 'EUPMYEONDONG'
+                       AND c.eupmyeondong_code = #{areaCode}
+                   )
+                   OR (
+                       LENGTH(#{areaCode}) = 10
+                       AND SUBSTRING(#{areaCode}, 9, 2) = '00'
+                       AND c.level = 'EUPMYEONDONG'
+                       AND c.eupmyeondong_code = SUBSTRING(#{areaCode}, 1, 8)
+                   )
+                ORDER BY match_priority, c.area_code
+                LIMIT 1
+            ) matched_area
             LIMIT 1
         ),
         scope_candidates AS (
@@ -28,15 +74,61 @@
 
             UNION ALL
 
+            SELECT c.sigungu_code || '00000' AS area_code, 2 AS priority
+            FROM public.sd_area_code c
+            CROSS JOIN selected_area s
+            WHERE s.selected_level = 'SIDO'
+              AND c.level = 'SIGUNGU'
+              AND c.sido_code = s.sido_code
+              AND c.sigungu_code IS NOT NULL
+              AND c.sigungu_code != ''
+
+            UNION ALL
+
             SELECT s.area_code, 1 AS priority
             FROM selected_area s
             WHERE s.selected_level = 'SIGUNGU'
 
             UNION ALL
 
+            SELECT s.sigungu_code || '00000' AS area_code, 2 AS priority
+            FROM selected_area s
+            WHERE s.selected_level = 'SIGUNGU'
+              AND s.sigungu_code IS NOT NULL
+              AND s.sigungu_code != ''
+
+            UNION ALL
+
+            SELECT c.area_code, 3 AS priority
+            FROM public.sd_area_code c
+            CROSS JOIN selected_area s
+            WHERE s.selected_level = 'SIGUNGU'
+              AND c.level = 'EUPMYEONDONG'
+              AND c.sido_code = s.sido_code
+              AND c.sigungu_code = s.sigungu_code
+
+            UNION ALL
+
+            SELECT c.area_code, 3 AS priority
+            FROM public.sd_area_code c
+            CROSS JOIN selected_area s
+            WHERE s.selected_level = 'SIDO'
+              AND c.level = 'EUPMYEONDONG'
+              AND c.sido_code = s.sido_code
+
+            UNION ALL
+
             SELECT s.area_code, 1 AS priority
             FROM selected_area s
             WHERE s.selected_level = 'EUPMYEONDONG'
+
+            UNION ALL
+
+            SELECT s.eupmyeondong_code || '00' AS area_code, 2 AS priority
+            FROM selected_area s
+            WHERE s.selected_level = 'EUPMYEONDONG'
+              AND s.eupmyeondong_code IS NOT NULL
+              AND s.eupmyeondong_code != ''
 
             UNION ALL
 
@@ -57,7 +149,20 @@
 
             UNION ALL
 
-            SELECT c.area_code, 2 AS priority
+            SELECT c.eupmyeondong_code || '00' AS area_code, 3 AS priority
+            FROM public.sd_area_code c
+            CROSS JOIN selected_area s
+            WHERE s.selected_level = 'JIPGYEGU'
+              AND c.level = 'EUPMYEONDONG'
+              AND c.sido_code = s.sido_code
+              AND c.sigungu_code = s.sigungu_code
+              AND c.eupmyeondong_code = s.eupmyeondong_code
+              AND c.eupmyeondong_code IS NOT NULL
+              AND c.eupmyeondong_code != ''
+
+            UNION ALL
+
+            SELECT c.area_code, 3 AS priority
             FROM public.sd_area_code c
             CROSS JOIN selected_area s
             WHERE s.selected_level = 'EUPMYEONDONG'
@@ -67,7 +172,7 @@
 
             UNION ALL
 
-            SELECT c.area_code, 3 AS priority
+            SELECT c.area_code, 4 AS priority
             FROM public.sd_area_code c
             CROSS JOIN selected_area s
             WHERE s.selected_level = 'JIPGYEGU'

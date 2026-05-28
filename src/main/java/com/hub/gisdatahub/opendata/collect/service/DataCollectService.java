@@ -230,7 +230,7 @@ public class DataCollectService {
 
     private java.util.Optional<SeoulPopulationRow> toLivingPopulationRow(JsonNode rowNode, String sourceCode) {
         String apiAreaCode = text(rowNode, "ADSTRD_CODE_SE");
-        String storeAreaCode = resolveStoreAreaCode(apiAreaCode, sourceCode);
+        String storeAreaCode = resolveStoreAreaCode(apiAreaCode);
 
         if (storeAreaCode == null) {
             return java.util.Optional.empty();
@@ -312,32 +312,16 @@ public class DataCollectService {
         ));
     }
 
-    private String resolveStoreAreaCode(String apiAreaCode, String sourceCode) {
+    private String resolveStoreAreaCode(String apiAreaCode) {
         if (apiAreaCode == null || apiAreaCode.isBlank()) {
             return null;
         }
 
         String normalizedAreaCode = apiAreaCode.trim();
-        if (LIVING_POPULATION_SIGUNGU.equals(sourceCode) && normalizedAreaCode.length() == 5) {
-            return normalizedAreaCode + "00000";
-        }
+        String mappedAreaCode = seoulPopulationMapper.findAreaCodeByLivingPopulationApiCode(normalizedAreaCode);
 
-        if (normalizedAreaCode.length() == 10 && seoulPopulationMapper.existsAreaCode(normalizedAreaCode)) {
-            return normalizedAreaCode;
-        }
-
-        if (normalizedAreaCode.length() == 8) {
-            String dongCandidate = normalizedAreaCode + "00";
-            if (seoulPopulationMapper.existsAreaCode(dongCandidate)) {
-                return dongCandidate;
-            }
-
-            // 현재 sd_area_code가 법정동 중심이면 서울 생활인구 행정동 코드가 FK와 맞지 않습니다.
-            // 이 경우 저장 자체가 실패하지 않도록 우선 소속 자치구 코드로 저장합니다.
-            String sigunguCandidate = normalizedAreaCode.substring(0, 5) + "00000";
-            if (seoulPopulationMapper.existsAreaCode(sigunguCandidate)) {
-                return sigunguCandidate;
-            }
+        if (mappedAreaCode != null && !mappedAreaCode.isBlank()) {
+            return mappedAreaCode;
         }
 
         return seoulPopulationMapper.existsAreaCode(normalizedAreaCode) ? normalizedAreaCode : null;
@@ -420,6 +404,9 @@ public class DataCollectService {
                 SDOT_VISITOR_COUNT,
                 autonomousDistrict,
                 administrativeDistrict);
+        if (areaCode == null || areaCode.isBlank()) {
+            return java.util.Optional.empty();
+        }
 
         return java.util.Optional.of(new SdotVisitorRow(
                 areaCode,

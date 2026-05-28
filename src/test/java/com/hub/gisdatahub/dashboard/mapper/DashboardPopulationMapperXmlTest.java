@@ -57,4 +57,18 @@ class DashboardPopulationMapperXmlTest {
                 .contains("AND c.eupmyeondong_code = s.eupmyeondong_code")
                 .contains("AND c.level = 'SIGUNGU'");
     }
+
+    @Test
+    void findAreaPopulationAcceptsFiveAndTenDigitAreaCodes() throws IOException {
+        String mapperXml = new ClassPathResource("mapper/DashboardPopulationMapper.xml")
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(mapperXml)
+                .contains("AND c.sigungu_code = #{areaCode}")
+                .contains("SUBSTRING(#{areaCode}, 6, 5) = '00000'")
+                .contains("AND c.sigungu_code = SUBSTRING(#{areaCode}, 1, 5)")
+                .contains("AND c.eupmyeondong_code = SUBSTRING(#{areaCode}, 1, 8)")
+                .contains("s.sigungu_code || '00000'")
+                .contains("s.eupmyeondong_code || '00'");
+    }
 }
