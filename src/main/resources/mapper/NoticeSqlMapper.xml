@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.hub.gisdatahub.board.mapper.NoticeSqlMapper">
+
+    <select id="findByNoticeList" resultType="com.hub.gisdatahub.board.dto.BoardPostDto">
+        SELECT 
+            post_id,
+            board_type_code,
+            user_id,
+            title,
+            content,
+            visibility_status,
+            pinned_yn,
+            created_at,
+            view_count,
+            updated_at,
+            deleted_yn
+        FROM sd_board_post 
+        WHERE board_type_code = 'NOTICE'
+            AND deleted_yn = 'N'
+        ORDER BY pinned_yn DESC, created_at DESC
+    </select>
+
+    <select id="findByNoticeDetailData">
+        SELECT 
+            post_id,
+            board_type_code,
+            user_id,
+            title,
+            content,
+            visibility_status,
+            pinned_yn,
+            created_at,
+            view_count,
+            updated_at,
+            deleted_yn
+        FROM sd_board_post 
+        WHERE post_id = {id}
+            AND board_type_code = 'NOTICE'
+            AND deleted_yn = 'N'
+    </select>
+</mapper>
