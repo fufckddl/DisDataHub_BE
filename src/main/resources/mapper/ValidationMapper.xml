@@ -44,10 +44,10 @@
           )
     </update>
 
-    <update id="bakeGeometry" parameterType="long">
+    <update id="bakeGeometry">
         UPDATE sd_upload_temp_feature
         SET 
-            geom_4326 = ST_SetSRID(ST_GeomFromText(raw_wkt), 4326)
+            geom_4326 = ST_Transform(ST_SetSRID(ST_GeomFromText(raw_wkt), #{originalSrid}), 4326)
         WHERE upload_id = #{uploadId}
           AND validation_status = 'PENDING'
           AND raw_wkt IS NOT NULL

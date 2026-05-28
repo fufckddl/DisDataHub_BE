@@ -19,7 +19,7 @@ public interface ValidationMapper {
     void invalidateMissingValues(Long uploadId);
 
     // 2차: WKT 텍스트를 진짜 공간 객체(geom_4326)로 굽기 (SRID 4326 주입)
-    void bakeGeometry(Long uploadId);
+    void bakeGeometry(@Param("uploadId") Long uploadId, @Param("originalSrid") int originalSrid);
 
     // 3차: 기하학적 무결성 검증 (꼬인 선, 닫히지 않은 면 색출)
     void invalidateInvalidGeometry(Long uploadId);

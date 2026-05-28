@@ -47,7 +47,8 @@ public class DatasetService {
         fileUploadService.extractFileInfo(dto.getFile(), dto);
 
         // 2️⃣ DB에 4연속 INSERT (이때 XML 쿼리에 의해 경로는 '' 빈칸으로 들어갑니다!)
-        datasetMapper.insertDataset(dto);       
+        datasetMapper.insertDataset(dto);   
+        datasetMapper.insertDatasetStat(dto.getDatasetId());    
         datasetMapper.insertMetadata(dto);      
         datasetMapper.insertUploadLog(dto);     
         datasetMapper.insertDatasetFile(dto);   
@@ -93,7 +94,7 @@ public class DatasetService {
 
         // [제3막 시작] DB에 들어간 데이터를 PostGIS 딥 검증
         System.out.println("[작업 반장] 파싱 완료! 검증 전담반에게 딥 검증을 지시합니다.");
-        dataValidationService.validateTempData(dto.getUploadId(), dto.getDatasetId(), dto.getStoredFilename());
+        dataValidationService.validateTempData(dto.getUploadId(), dto.getDatasetId(), dto.getStoredFilename(), dto.getOriginalSrid());
 
         return totalParsedCount;
     }

@@ -25,7 +25,7 @@ public class DataValidationService {
 
     // 임시 테이블(sd_upload_temp_feature)에 적재된 데이터를 PostGIS 기반으로 전수 검사
     @Transactional(noRollbackFor = ValidationFailedException.class, rollbackFor = Exception.class)
-    public void validateTempData(Long uploadId, Long datasetId, String storedFilename) {
+    public void validateTempData(Long uploadId, Long datasetId, String storedFilename, int originalSrid) {
         System.out.println("[공간 검증반] PostGIS 공간 데이터 딥 검증을 시작합니다.");
 
         try {
@@ -34,7 +34,7 @@ public class DataValidationService {
             validationMapper.invalidateMissingValues(uploadId);
 
             // 2. 텍스트 WKT를 진짜 공간 객체(geom_4326)로 굽기 (필수 진행)
-            validationMapper.bakeGeometry(uploadId);
+            validationMapper.bakeGeometry(uploadId, originalSrid);
 
             // 3. 모양이 붕괴된 도형 색출
             validationMapper.insertInvalidGeometryErrors(uploadId);
