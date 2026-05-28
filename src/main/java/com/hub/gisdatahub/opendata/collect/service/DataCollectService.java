@@ -1,370 +1,587 @@
 package com.hub.gisdatahub.opendata.collect.service;
 
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hub.gisdatahub.exception.DataCollectException;
 import com.hub.gisdatahub.opendata.collect.client.DataCollectClient;
-import com.hub.gisdatahub.opendata.collect.dto.seoul.SeoulPopulationRow;
+import com.hub.gisdatahub.opendata.collect.dto.mois.MoisResidentPopulationRow;
 import com.hub.gisdatahub.opendata.collect.dto.seoul.SdotVisitorRow;
-import com.hub.gisdatahub.opendata.collect.mapper.SeoulPopulationMapper;
+import com.hub.gisdatahub.opendata.collect.mapper.MoisResidentPopulationMapper;
 import com.hub.gisdatahub.opendata.collect.mapper.SdotVisitorMapper;
 
 @Service
 public class DataCollectService {
+    private static final Logger log = LoggerFactory.getLogger(DataCollectService.class);
+
     private static final ZoneId SEOUL_ZONE = ZoneId.of("Asia/Seoul");
-    private static final DateTimeFormatter BASIC_DATE = DateTimeFormatter.BASIC_ISO_DATE;
+    private static final DateTimeFormatter STATS_YM = DateTimeFormatter.ofPattern("yyyyMM");
     private static final DateTimeFormatter SDOT_SENSING_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH:mm:ss");
     private static final DateTimeFormatter SDOT_REGISTERED_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-    private static final int RECENT_DATA_LOOKBACK_DAYS = 7;
-    private static final String LIVING_POPULATION_DONG = "SPOP_LOCAL_RESD_DONG";
-    private static final String LIVING_POPULATION_SIGUNGU = "SPOP_LOCAL_RESD_JACHI";
+    private static final int MOIS_PAGE_SIZE = 100;
+    private static final int MOIS_MAX_ATTEMPTS = 2;
+    private static final long MOIS_RETRY_DELAY_MILLIS = 1_000L;
+    private static final String MOIS_ROOT_ADMM_CD = "0000000000";
+    private static final String MOIS_DEFAULT_REG_SE_CD = "1";
     private static final String SDOT_VISITOR_COUNT = "IotVdata018";
 
     private final DataCollectException dataCollectException;
     private final DataCollectClient dataCollectClient;
-    private final SeoulPopulationMapper seoulPopulationMapper;
+    private final MoisResidentPopulationMapper moisResidentPopulationMapper;
     private final SdotVisitorMapper sdotVisitorMapper;
     private final ObjectMapper objectMapper;
 
     public DataCollectService(
         DataCollectException dataCollectException,
         DataCollectClient dataCollectClient,
-        SeoulPopulationMapper seoulPopulationMapper,
+        MoisResidentPopulationMapper moisResidentPopulationMapper,
         SdotVisitorMapper sdotVisitorMapper,
         ObjectMapper objectMapper
     ) {
         this.dataCollectException = dataCollectException;
         this.dataCollectClient = dataCollectClient;
-        this.seoulPopulationMapper = seoulPopulationMapper;
+        this.moisResidentPopulationMapper = moisResidentPopulationMapper;
         this.sdotVisitorMapper = sdotVisitorMapper;
         this.objectMapper = objectMapper;
     }
 
-    // 스케줄러에서 하루 1회 호출하는 수집 진입점입니다.
-    // OpenAPI 응답은 즉시 DB에 저장하고, 대시보드 화면은 이 DB 데이터만 조회합니다.
-    public int collectDailySeoulSigunguLivingPopulation() {
-        return collectSeoulSigunguLivingPopulation(null, "00");
+    // 스케줄러에서 월 1회 또는 수동 실행 시 호출하는 행안부 주민등록 인구 수집 진입점입니다.
+    public int collectDailyResidentPopulation() {
+        return collectResidentPopulation(null, MOIS_DEFAULT_REG_SE_CD, null);
     }
 
-    // 스케줄러에서 하루 1회 호출하는 서울 S-DoT 유동인구 수집 진입점입니다.
-    public int collectDailySdotVisitorCount() {
-        return collectSdotVisitorCount(1, 1000);
+    // 행안부 행정동별(통반단위) 성/연령별 주민등록 인구수를 레벨별로 수집합니다.
+    // lv: 1 광역시도, 2 시군구, 3 읍면동, 4 읍면동 통반. null/ALL이면 1~4와 TOTAL 집계를 모두 저장합니다.
+    public int collectResidentPopulation(String statsYm, String regSeCd, String lv) {
+        return collectResidentPopulation(statsYm, regSeCd, lv, null);
     }
 
-    // 수동 테스트 또는 재수집이 필요할 때 특정 기준일/시간으로 서울 자치구 생활인구를 일괄 수집합니다.
-    public int collectSeoulSigunguLivingPopulation(String date, String hour) {
-        String requestHour = resolveHour(hour);
+    public int collectResidentPopulation(String statsYm, String regSeCd, String lv, String sidoCode) {
+        String requestStatsYm = resolveStatsYm(statsYm);
+        String requestRegSeCd = resolveMoisRegSeCd(regSeCd);
+        List<String> levels = resolveMoisLevels(lv);
+        boolean includeTotal = shouldIncludeTotal(lv);
+        String requestSidoCode = normalizeSidoCode(sidoCode);
+        int savedCount = 0;
 
-        if (date != null && !date.isBlank()) {
-            validateBasicDate(date);
-            return collectSeoulSigunguLivingPopulationByDate(date, requestHour);
+        for (String level : levels) {
+            savedCount += collectMoisResidentPopulationLevel(requestStatsYm, requestRegSeCd, level, requestSidoCode);
         }
 
-        LocalDate today = LocalDate.now(SEOUL_ZONE);
-        for (int daysAgo = 1; daysAgo <= RECENT_DATA_LOOKBACK_DAYS; daysAgo++) {
-            String requestDate = today.minusDays(daysAgo).format(BASIC_DATE);
-            int savedCount = collectSeoulSigunguLivingPopulationByDate(requestDate, requestHour);
+        if (includeTotal) {
+            savedCount += moisResidentPopulationMapper.upsertTotal(requestStatsYm, requestRegSeCd);
+        }
+
+        return savedCount;
+    }
+
+    private int collectMoisResidentPopulationLevel(String statsYm, String regSeCd, String level, String sidoCode) {
+        if ("1".equals(level) && (sidoCode == null || sidoCode.isBlank())) {
+            int savedCount = collectMoisResidentPopulationPages(MOIS_ROOT_ADMM_CD, statsYm, regSeCd, level);
             if (savedCount > 0) {
                 return savedCount;
             }
         }
 
-        return 0;
+        int fallbackSavedCount = 0;
+        for (String parentAdmmCd : findMoisParentAdmmCodes(level)) {
+            if (parentAdmmCd != null
+                    && !parentAdmmCd.isBlank()
+                    && (sidoCode == null || sidoCode.isBlank() || parentAdmmCd.startsWith(sidoCode))) {
+                fallbackSavedCount += collectMoisResidentPopulationPages(parentAdmmCd, statsYm, regSeCd, level);
+            }
+        }
+        return fallbackSavedCount;
     }
 
-    private int collectSeoulSigunguLivingPopulationByDate(String date, String hour) {
-        int savedCount = 0;
-        for (String sigunguCode : seoulPopulationMapper.findSeoulSigunguApiCodes()) {
-            String result = dataCollectClient.callLivingPopulationBySigungu(
-                date,
-                hour,
-                sigunguCode
-            );
-            savedCount += saveLivingPopulation(result, LIVING_POPULATION_SIGUNGU);
+    private String normalizeSidoCode(String sidoCode) {
+        if (sidoCode == null || sidoCode.isBlank()) {
+            return null;
         }
+        String trimmed = sidoCode.trim();
+        return trimmed.length() >= 2 ? trimmed.substring(0, 2) : trimmed;
+    }
+
+    private List<String> findMoisParentAdmmCodes(String level) {
+        return switch (level) {
+            case "2" -> moisResidentPopulationMapper.findSidoAdmmCodes();
+            case "3" -> moisResidentPopulationMapper.findSigunguAdmmCodes();
+            case "4" -> moisResidentPopulationMapper.findEupmyeondongAdmmCodes();
+            default -> List.of();
+        };
+    }
+
+    private int collectMoisResidentPopulationPages(String admmCd, String statsYm, String regSeCd, String level) {
+        int pageNo = 1;
+        int savedCount = 0;
+        Map<String, String> areaCodeCache = new ConcurrentHashMap<>();
+
+        while (true) {
+            Optional<String> responseBody = callMoisResidentPopulationWithRetry(
+                    admmCd,
+                    statsYm,
+                    statsYm,
+                    level,
+                    regSeCd,
+                    pageNo,
+                    MOIS_PAGE_SIZE);
+            if (responseBody.isEmpty()) {
+                break;
+            }
+
+            MoisPageResult pageResult = saveMoisResidentPopulation(responseBody.get(), level, regSeCd, statsYm, areaCodeCache);
+            savedCount += pageResult.savedCount();
+
+            if (pageResult.totalCount() <= pageNo * MOIS_PAGE_SIZE || pageResult.totalCount() == 0) {
+                break;
+            }
+            pageNo++;
+        }
+
         return savedCount;
     }
 
-    public String getLivingPopulationByDong(String date, String hour, String areaCode){
-        String requestHour = resolveHour(hour);
+    private Optional<String> callMoisResidentPopulationWithRetry(
+            String admmCd,
+            String statsYm,
+            String srchToYm,
+            String level,
+            String regSeCd,
+            int pageNo,
+            int pageSize) {
+        for (int attempt = 1; attempt <= MOIS_MAX_ATTEMPTS; attempt++) {
+            try {
+                return Optional.ofNullable(dataCollectClient.callMoisResidentPopulation(
+                        admmCd,
+                        statsYm,
+                        srchToYm,
+                        level,
+                        regSeCd,
+                        pageNo,
+                        pageSize));
+            } catch (RestClientResponseException exception) {
+                if (!isRetryableMoisStatus(exception.getStatusCode().value())) {
+                    throw exception;
+                }
+                logMoisRetry(admmCd, level, pageNo, attempt, exception);
+            } catch (ResourceAccessException exception) {
+                logMoisRetry(admmCd, level, pageNo, attempt, exception);
+            } catch (RestClientException exception) {
+                logMoisRetry(admmCd, level, pageNo, attempt, exception);
+            }
 
-        if (date != null && !date.isBlank()) {
-            validateBasicDate(date);
-            String result = dataCollectClient.callLivingPopulationByDong(
-                date,
-                requestHour,
-                areaCode
-            );
-            saveLivingPopulation(result, LIVING_POPULATION_DONG);
-            return result;
-        }
-
-        return getLatestLivingPopulationByDong(requestHour, areaCode);
-    }
-
-    public String getLivingPopulationBySigungu(String date, String hour, String sigunguCode) {
-        String requestHour = resolveHour(hour);
-
-        if (date != null && !date.isBlank()) {
-            validateBasicDate(date);
-            String result = dataCollectClient.callLivingPopulationBySigungu(
-                date,
-                requestHour,
-                sigunguCode
-            );
-            saveLivingPopulation(result, LIVING_POPULATION_SIGUNGU);
-            return result;
-        }
-
-        return getLatestLivingPopulationBySigungu(requestHour, sigunguCode);
-    }
-
-    // 서울시 인구(행정동) 통계 가장 최근 날짜에서 값 가져옴
-    // → 데이터 없으면 하루 전 조회
-    // → 계속 7일 전까지 조회
-    // → 처음 INFO-000이 나오는 응답 반환
-    private String getLatestLivingPopulationByDong(String hour, String areaCode) {
-        LocalDate today = LocalDate.now(SEOUL_ZONE);
-
-        for (int daysAgo = 0; daysAgo <= RECENT_DATA_LOOKBACK_DAYS; daysAgo++) {
-            String requestDate = today.minusDays(daysAgo).format(BASIC_DATE);
-            String result = dataCollectClient.callLivingPopulationByDong(
-                requestDate,
-                hour,
-                areaCode
-            );
-
-            if (hasSeoulOpenApiData(result)) {
-                saveLivingPopulation(result, LIVING_POPULATION_DONG);
-                return result;
+            if (attempt < MOIS_MAX_ATTEMPTS) {
+                sleepBeforeMoisRetry();
             }
         }
 
-        String fallbackDate = today.minusDays(RECENT_DATA_LOOKBACK_DAYS).format(BASIC_DATE);
-        String result = dataCollectClient.callLivingPopulationByDong(
-            fallbackDate,
-            hour,
-            areaCode
-        );
-        saveLivingPopulation(result, LIVING_POPULATION_DONG);
-        return result;
+        log.warn("행안부 주민등록 인구 API 호출을 건너뜁니다. admmCd={}, lv={}, pageNo={}", admmCd, level, pageNo);
+        return Optional.empty();
     }
 
-    // 서울시 인구(자치구) 통계 가장 최근 날짜에서 값 가져옴
-    private String getLatestLivingPopulationBySigungu(String hour, String sigunguCode) {
-        LocalDate today = LocalDate.now(SEOUL_ZONE);
+    private boolean isRetryableMoisStatus(int statusCode) {
+        return statusCode == 408 || statusCode == 429 || statusCode >= 500;
+    }
 
-        for (int daysAgo = 0; daysAgo <= RECENT_DATA_LOOKBACK_DAYS; daysAgo++) {
-            String requestDate = today.minusDays(daysAgo).format(BASIC_DATE);
-            String result = dataCollectClient.callLivingPopulationBySigungu(
-                requestDate,
-                hour,
-                sigunguCode
-            );
+    private void logMoisRetry(String admmCd, String level, int pageNo, int attempt, RuntimeException exception) {
+        log.warn(
+                "행안부 주민등록 인구 API 호출 실패. admmCd={}, lv={}, pageNo={}, attempt={}/{}, error={}",
+                admmCd,
+                level,
+                pageNo,
+                attempt,
+                MOIS_MAX_ATTEMPTS,
+                exception.getMessage());
+    }
 
-            if (hasSeoulOpenApiData(result)) {
-                saveLivingPopulation(result, LIVING_POPULATION_SIGUNGU);
-                return result;
-            }
+    private void sleepBeforeMoisRetry() {
+        try {
+            Thread.sleep(MOIS_RETRY_DELAY_MILLIS);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
         }
-
-        String fallbackDate = today.minusDays(RECENT_DATA_LOOKBACK_DAYS).format(BASIC_DATE);
-        String result = dataCollectClient.callLivingPopulationBySigungu(
-            fallbackDate,
-            hour,
-            sigunguCode
-        );
-        saveLivingPopulation(result, LIVING_POPULATION_SIGUNGU);
-        return result;
     }
 
-    private boolean hasSeoulOpenApiData(String responseBody) {
-        return responseBody != null && responseBody.contains("\"CODE\":\"INFO-000\"");
-    }
-
-    private int saveLivingPopulation(String responseBody, String sourceCode) {
-        if (!hasSeoulOpenApiData(responseBody)) {
-            return 0;
-        }
-
-        List<SeoulPopulationRow> rows = parseLivingPopulationRows(responseBody, sourceCode);
-        rows.forEach(seoulPopulationMapper::upsert);
-        return rows.size();
-    }
-
-    private List<SeoulPopulationRow> parseLivingPopulationRows(String responseBody, String sourceCode) {
+    private MoisPageResult saveMoisResidentPopulation(
+            String responseBody,
+            String level,
+            String regSeCd,
+            String fallbackStatsYm,
+            Map<String, String> areaCodeCache) {
         try {
             JsonNode root = objectMapper.readTree(responseBody);
-            JsonNode serviceNode = root.path(sourceCode);
-            JsonNode rowsNode = serviceNode.path("row");
-            List<SeoulPopulationRow> rows = new ArrayList<>();
-
-            if (rowsNode.isArray()) {
-                for (JsonNode rowNode : rowsNode) {
-                    toLivingPopulationRow(rowNode, sourceCode)
-                        .ifPresent(rows::add);
-                }
-                return rows;
+            JsonNode head = findMoisHead(root);
+            int totalCount = moisTotalCount(root, head);
+            String resultCode = moisResultCode(root, head);
+            if (isMoisNoData(resultCode, root, head)) {
+                return new MoisPageResult(0, 0);
+            }
+            if (!isMoisSuccess(resultCode)) {
+                throw new IllegalStateException("행안부 주민등록 인구 API 호출에 실패했습니다. resultCode="
+                        + resultCode
+                        + ", resultMsg="
+                        + moisResultMessage(root, head));
             }
 
-            if (!rowsNode.isMissingNode() && !rowsNode.isNull()) {
-                toLivingPopulationRow(rowsNode, sourceCode)
-                    .ifPresent(rows::add);
-            }
-
-            return rows;
+            JsonNode itemNode = findMoisItemNode(root);
+            List<MoisResidentPopulationRow> rows = parseMoisResidentPopulationRows(
+                    itemNode,
+                    level,
+                    regSeCd,
+                    fallbackStatsYm,
+                    areaCodeCache);
+            rows.forEach(moisResidentPopulationMapper::upsert);
+            return new MoisPageResult(rows.size(), totalCount);
         } catch (Exception exception) {
-            throw new IllegalStateException("서울 생활인구 응답 저장 처리에 실패했습니다.", exception);
+            throw new IllegalStateException("행안부 주민등록 인구 응답 저장 처리에 실패했습니다.", exception);
         }
     }
 
-    private java.util.Optional<SeoulPopulationRow> toLivingPopulationRow(JsonNode rowNode, String sourceCode) {
-        String apiAreaCode = text(rowNode, "ADSTRD_CODE_SE");
-        String storeAreaCode = resolveStoreAreaCode(apiAreaCode, sourceCode);
+    private List<MoisResidentPopulationRow> parseMoisResidentPopulationRows(
+            JsonNode itemNode,
+            String level,
+            String regSeCd,
+            String fallbackStatsYm,
+            Map<String, String> areaCodeCache) {
+        List<MoisResidentPopulationRow> rows = new ArrayList<>();
+        if (itemNode.isArray()) {
+            for (JsonNode rowNode : itemNode) {
+                toMoisResidentPopulationRow(rowNode, level, regSeCd, fallbackStatsYm, areaCodeCache)
+                        .ifPresent(rows::add);
+            }
+            return rows;
+        }
 
-        if (storeAreaCode == null) {
+        if (!itemNode.isMissingNode() && !itemNode.isNull()) {
+            toMoisResidentPopulationRow(itemNode, level, regSeCd, fallbackStatsYm, areaCodeCache)
+                    .ifPresent(rows::add);
+        }
+        return rows;
+    }
+
+    private java.util.Optional<MoisResidentPopulationRow> toMoisResidentPopulationRow(
+            JsonNode rowNode,
+            String level,
+            String regSeCd,
+            String fallbackStatsYm,
+            Map<String, String> areaCodeCache) {
+        String admmCd = text(rowNode, "admmCd");
+        if (admmCd.isBlank()) {
             return java.util.Optional.empty();
         }
 
-        BigDecimal male0To9 = decimal(rowNode, "MALE_F0T9_LVPOP_CO");
-        BigDecimal male10To14 = decimal(rowNode, "MALE_F10T14_LVPOP_CO");
-        BigDecimal male15To19 = decimal(rowNode, "MALE_F15T19_LVPOP_CO");
-        BigDecimal male20To24 = decimal(rowNode, "MALE_F20T24_LVPOP_CO");
-        BigDecimal male25To29 = decimal(rowNode, "MALE_F25T29_LVPOP_CO");
-        BigDecimal male30To34 = decimal(rowNode, "MALE_F30T34_LVPOP_CO");
-        BigDecimal male35To39 = decimal(rowNode, "MALE_F35T39_LVPOP_CO");
-        BigDecimal male40To44 = decimal(rowNode, "MALE_F40T44_LVPOP_CO");
-        BigDecimal male45To49 = decimal(rowNode, "MALE_F45T49_LVPOP_CO");
-        BigDecimal male50To54 = decimal(rowNode, "MALE_F50T54_LVPOP_CO");
-        BigDecimal male55To59 = decimal(rowNode, "MALE_F55T59_LVPOP_CO");
-        BigDecimal male60To64 = decimal(rowNode, "MALE_F60T64_LVPOP_CO");
-        BigDecimal male65To69 = decimal(rowNode, "MALE_F65T69_LVPOP_CO");
-        BigDecimal male70To74 = decimal(rowNode, "MALE_F70T74_LVPOP_CO");
+        String statsYm = text(rowNode, "statsYm");
+        if (statsYm.isBlank()) {
+            statsYm = fallbackStatsYm;
+        }
 
-        BigDecimal female0To9 = decimal(rowNode, "FEMALE_F0T9_LVPOP_CO");
-        BigDecimal female10To14 = decimal(rowNode, "FEMALE_F10T14_LVPOP_CO");
-        BigDecimal female15To19 = decimal(rowNode, "FEMALE_F15T19_LVPOP_CO");
-        BigDecimal female20To24 = decimal(rowNode, "FEMALE_F20T24_LVPOP_CO");
-        BigDecimal female25To29 = decimal(rowNode, "FEMALE_F25T29_LVPOP_CO");
-        BigDecimal female30To34 = decimal(rowNode, "FEMALE_F30T34_LVPOP_CO");
-        BigDecimal female35To39 = decimal(rowNode, "FEMALE_F35T39_LVPOP_CO");
-        BigDecimal female40To44 = decimal(rowNode, "FEMALE_F40T44_LVPOP_CO");
-        BigDecimal female45To49 = decimal(rowNode, "FEMALE_F45T49_LVPOP_CO");
-        BigDecimal female50To54 = decimal(rowNode, "FEMALE_F50T54_LVPOP_CO");
-        BigDecimal female55To59 = decimal(rowNode, "FEMALE_F55T59_LVPOP_CO");
-        BigDecimal female60To64 = decimal(rowNode, "FEMALE_F60T64_LVPOP_CO");
-        BigDecimal female65To69 = decimal(rowNode, "FEMALE_F65T69_LVPOP_CO");
-        BigDecimal female70To74 = decimal(rowNode, "FEMALE_F70T74_LVPOP_CO");
-
-        return java.util.Optional.of(new SeoulPopulationRow(
-            storeAreaCode,
-            sourceCode,
-            LocalDate.parse(text(rowNode, "STDR_DE_ID"), BASIC_DATE),
-            text(rowNode, "TMZON_PD_SE"),
-            decimal(rowNode, "TOT_LVPOP_CO"),
-            sum(
-                male0To9, male10To14, male15To19, male20To24, male25To29, male30To34, male35To39,
-                male40To44, male45To49, male50To54, male55To59, male60To64, male65To69, male70To74
-            ),
-            sum(
-                female0To9, female10To14, female15To19, female20To24, female25To29, female30To34, female35To39,
-                female40To44, female45To49, female50To54, female55To59, female60To64, female65To69, female70To74
-            ),
-            male0To9,
-            male10To14,
-            male15To19,
-            male20To24,
-            male25To29,
-            male30To34,
-            male35To39,
-            male40To44,
-            male45To49,
-            male50To54,
-            male55To59,
-            male60To64,
-            male65To69,
-            male70To74,
-            female0To9,
-            female10To14,
-            female15To19,
-            female20To24,
-            female25To29,
-            female30To34,
-            female35To39,
-            female40To44,
-            female45To49,
-            female50To54,
-            female55To59,
-            female60To64,
-            female65To69,
-            female70To74,
-            rowNode.toString()
-        ));
+        String ctpvNm = text(rowNode, "ctpvNm");
+        String sggNm = text(rowNode, "sggNm");
+        String dongNm = text(rowNode, "dongNm");
+        String areaLevel = areaLevelByMoisLevel(level);
+        String areaCode = areaCodeCache.computeIfAbsent(
+                admmCd + "|" + ctpvNm + "|" + sggNm + "|" + dongNm,
+                ignored -> findAreaCode(admmCd, ctpvNm, sggNm, dongNm, areaLevel));
+        return java.util.Optional.of(new MoisResidentPopulationRow(
+                blankToNull(areaCode),
+                admmCd,
+                areaLevel,
+                level,
+                regSeCd,
+                statsYm,
+                blankToNull(ctpvNm),
+                blankToNull(sggNm),
+                blankToNull(dongNm),
+                blankToNull(text(rowNode, "tong")),
+                blankToNull(text(rowNode, "ban")),
+                longValue(rowNode, "totNmprCnt"),
+                longValue(rowNode, "maleNmprCnt"),
+                longValue(rowNode, "femlNmprCnt"),
+                longValue(rowNode, "male0AgeNmprCnt"),
+                longValue(rowNode, "male10AgeNmprCnt"),
+                longValue(rowNode, "male20AgeNmprCnt"),
+                longValue(rowNode, "male30AgeNmprCnt"),
+                longValue(rowNode, "male40AgeNmprCnt"),
+                longValue(rowNode, "male50AgeNmprCnt"),
+                longValue(rowNode, "male60AgeNmprCnt"),
+                longValue(rowNode, "male70AgeNmprCnt"),
+                longValue(rowNode, "male80AgeNmprCnt"),
+                longValue(rowNode, "male90AgeNmprCnt"),
+                longValue(rowNode, "male100AgeNmprCnt"),
+                longValue(rowNode, "feml0AgeNmprCnt"),
+                longValue(rowNode, "feml10AgeNmprCnt"),
+                longValue(rowNode, "feml20AgeNmprCnt"),
+                longValue(rowNode, "feml30AgeNmprCnt"),
+                longValue(rowNode, "feml40AgeNmprCnt"),
+                longValue(rowNode, "feml50AgeNmprCnt"),
+                longValue(rowNode, "feml60AgeNmprCnt"),
+                longValue(rowNode, "feml70AgeNmprCnt"),
+                longValue(rowNode, "feml80AgeNmprCnt"),
+                longValue(rowNode, "feml90AgeNmprCnt"),
+                longValue(rowNode, "feml100AgeNmprCnt"),
+                rowNode.toString()));
     }
 
-    private String resolveStoreAreaCode(String apiAreaCode, String sourceCode) {
-        if (apiAreaCode == null || apiAreaCode.isBlank()) {
-            return null;
+    private String findAreaCode(String admmCd, String ctpvNm, String sggNm, String dongNm, String areaLevel) {
+        String areaCode = moisResidentPopulationMapper.findAreaCodeByAdmmCd(admmCd);
+        if (areaCode != null && !areaCode.isBlank()) {
+            return areaCode;
         }
 
-        String normalizedAreaCode = apiAreaCode.trim();
-        if (LIVING_POPULATION_SIGUNGU.equals(sourceCode) && normalizedAreaCode.length() == 5) {
-            return normalizedAreaCode + "00000";
+        areaCode = moisResidentPopulationMapper.findAreaCodeByAdmmCodeAndSourceNames(
+                blankToNull(admmCd),
+                blankToNull(ctpvNm),
+                blankToNull(sggNm),
+                blankToNull(dongNm),
+                areaLevel);
+        if (areaCode != null && !areaCode.isBlank()) {
+            return areaCode;
         }
 
-        if (normalizedAreaCode.length() == 10 && seoulPopulationMapper.existsAreaCode(normalizedAreaCode)) {
-            return normalizedAreaCode;
+        return moisResidentPopulationMapper.findAreaCodeBySourceNames(
+                blankToNull(ctpvNm),
+                blankToNull(sggNm),
+                blankToNull(dongNm),
+                areaLevel);
+    }
+
+    private JsonNode firstNode(JsonNode node) {
+        if (node.isArray() && !node.isEmpty()) {
+            return node.get(0);
+        }
+        return node;
+    }
+
+    private JsonNode findMoisHead(JsonNode root) {
+        JsonNode topLevelHead = root.path("head");
+        if (!topLevelHead.isMissingNode()) {
+            return firstNode(topLevelHead);
         }
 
-        if (normalizedAreaCode.length() == 8) {
-            String dongCandidate = normalizedAreaCode + "00";
-            if (seoulPopulationMapper.existsAreaCode(dongCandidate)) {
-                return dongCandidate;
+        JsonNode upperResponseHeader = root.path("Response").path("head");
+        if (!upperResponseHeader.isMissingNode()) {
+            return upperResponseHeader;
+        }
+
+        JsonNode responseHeader = root.path("response").path("header");
+        if (!responseHeader.isMissingNode()) {
+            return responseHeader;
+        }
+
+        JsonNode responseBody = root.path("response").path("body");
+        if (!responseBody.isMissingNode()) {
+            return responseBody;
+        }
+
+        java.util.Iterator<JsonNode> values = root.elements();
+        while (values.hasNext()) {
+            JsonNode value = values.next();
+            if (!value.isArray()) {
+                continue;
             }
-
-            // 현재 sd_area_code가 법정동 중심이면 서울 생활인구 행정동 코드가 FK와 맞지 않습니다.
-            // 이 경우 저장 자체가 실패하지 않도록 우선 소속 자치구 코드로 저장합니다.
-            String sigunguCandidate = normalizedAreaCode.substring(0, 5) + "00000";
-            if (seoulPopulationMapper.existsAreaCode(sigunguCandidate)) {
-                return sigunguCandidate;
-            }
-        }
-
-        return seoulPopulationMapper.existsAreaCode(normalizedAreaCode) ? normalizedAreaCode : null;
-    }
-
-    private BigDecimal decimal(JsonNode node, String fieldName) {
-        String value = text(node, fieldName);
-        if (value == null || value.isBlank()) {
-            return BigDecimal.ZERO;
-        }
-
-        return new BigDecimal(value);
-    }
-
-    private String text(JsonNode node, String fieldName) {
-        JsonNode value = node.path(fieldName);
-        return value.isMissingNode() || value.isNull() ? "" : value.asText().trim();
-    }
-
-    private BigDecimal sum(BigDecimal... values) {
-        BigDecimal result = BigDecimal.ZERO;
-        for (BigDecimal value : values) {
-            if (value != null) {
-                result = result.add(value);
+            for (JsonNode section : value) {
+                JsonNode sectionHead = section.path("head");
+                if (!sectionHead.isMissingNode()) {
+                    return firstNode(sectionHead);
+                }
             }
         }
-        return result;
+
+        return root.path("__missing__");
+    }
+
+    private JsonNode findMoisItemNode(JsonNode root) {
+        JsonNode topLevelItems = root.path("items").path("item");
+        if (!topLevelItems.isMissingNode()) {
+            return topLevelItems;
+        }
+
+        JsonNode upperResponseItems = root.path("Response").path("items").path("item");
+        if (!upperResponseItems.isMissingNode()) {
+            return upperResponseItems;
+        }
+
+        JsonNode responseItems = root.path("response").path("body").path("items").path("item");
+        if (!responseItems.isMissingNode()) {
+            return responseItems;
+        }
+
+        java.util.Iterator<JsonNode> values = root.elements();
+        while (values.hasNext()) {
+            JsonNode value = values.next();
+            if (!value.isArray()) {
+                continue;
+            }
+            for (JsonNode section : value) {
+                JsonNode row = section.path("row");
+                if (!row.isMissingNode()) {
+                    return row;
+                }
+                JsonNode item = section.path("items").path("item");
+                if (!item.isMissingNode()) {
+                    return item;
+                }
+            }
+        }
+
+        return root.path("__missing__");
+    }
+
+    private int moisTotalCount(JsonNode root, JsonNode head) {
+        int totalCount = integer(head, "totalCount");
+        if (totalCount > 0) {
+            return totalCount;
+        }
+        totalCount = integer(root.path("Response").path("head"), "totalCount");
+        if (totalCount > 0) {
+            return totalCount;
+        }
+        return integer(root.path("response").path("body"), "totalCount");
+    }
+
+    private String moisResultCode(JsonNode root, JsonNode head) {
+        String resultCode = text(head, "resultCode");
+        if (!resultCode.isBlank()) {
+            return resultCode;
+        }
+
+        String nestedResultCode = text(head.path("RESULT"), "CODE");
+        if (!nestedResultCode.isBlank()) {
+            return nestedResultCode;
+        }
+
+        String upperResponseResultCode = text(root.path("Response").path("head"), "resultCode");
+        if (!upperResponseResultCode.isBlank()) {
+            return upperResponseResultCode;
+        }
+
+        return text(root.path("response").path("header"), "resultCode");
+    }
+
+    private boolean isMoisNoData(String resultCode, JsonNode root, JsonNode head) {
+        return "3".equals(resultCode)
+                || "NODATA_ERROR".equalsIgnoreCase(moisResultMessage(root, head));
+    }
+
+    private String moisResultMessage(JsonNode root, JsonNode head) {
+        String resultMessage = text(head, "resultMsg");
+        if (!resultMessage.isBlank()) {
+            return resultMessage;
+        }
+
+        resultMessage = text(head.path("RESULT"), "MESSAGE");
+        if (!resultMessage.isBlank()) {
+            return resultMessage;
+        }
+
+        resultMessage = text(root.path("Response").path("head"), "resultMsg");
+        if (!resultMessage.isBlank()) {
+            return resultMessage;
+        }
+
+        return text(root.path("response").path("header"), "resultMsg");
+    }
+
+    private boolean isMoisSuccess(String resultCode) {
+        return resultCode == null
+                || resultCode.isBlank()
+                || "0".equals(resultCode)
+                || "00".equals(resultCode)
+                || "INFO-000".equals(resultCode);
+    }
+
+    private String resolveStatsYm(String statsYm) {
+        if (statsYm == null || statsYm.isBlank()) {
+            return YearMonth.now(SEOUL_ZONE).minusMonths(1).format(STATS_YM);
+        }
+        String normalized = statsYm.replace("-", "").trim();
+        if (!normalized.matches("\\d{6}")) {
+            throw new IllegalArgumentException("statsYm은 YYYYMM 형식이어야 합니다.");
+        }
+        return normalized;
+    }
+
+    private String resolveMoisRegSeCd(String regSeCd) {
+        if (regSeCd == null || regSeCd.isBlank()) {
+            return MOIS_DEFAULT_REG_SE_CD;
+        }
+        String normalized = regSeCd.trim();
+        if (!normalized.matches("[1-4]")) {
+            throw new IllegalArgumentException("regSeCd는 1, 2, 3, 4 중 하나여야 합니다.");
+        }
+        return normalized;
+    }
+
+    private List<String> resolveMoisLevels(String lv) {
+        if (lv == null || lv.isBlank() || "ALL".equalsIgnoreCase(lv.trim())) {
+            return List.of("1", "2", "3", "4");
+        }
+
+        LinkedHashSet<String> levels = new LinkedHashSet<>();
+        for (String token : lv.split(",")) {
+            String level = normalizeMoisLevelToken(token);
+            if (level != null) {
+                levels.add(level);
+            }
+        }
+        return new ArrayList<>(levels);
+    }
+
+    private String normalizeMoisLevelToken(String token) {
+        String normalized = token == null ? "" : token.trim().toUpperCase();
+        return switch (normalized) {
+            case "1", "SIDO", "광역시도" -> "1";
+            case "2", "SIGUNGU", "시군구" -> "2";
+            case "3", "EUPMYEONDONG", "읍면동" -> "3";
+            case "4", "TONG_BAN", "통반", "읍면동 통반" -> "4";
+            case "TOTAL", "전체" -> null;
+            default -> throw new IllegalArgumentException("lv는 1,2,3,4,ALL,TOTAL 중 하나여야 합니다.");
+        };
+    }
+
+    private boolean shouldIncludeTotal(String lv) {
+        if (lv == null || lv.isBlank() || "ALL".equalsIgnoreCase(lv.trim())) {
+            return true;
+        }
+        for (String token : lv.split(",")) {
+            String normalized = token.trim().toUpperCase();
+            if ("TOTAL".equals(normalized) || "전체".equals(normalized)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String areaLevelByMoisLevel(String level) {
+        return switch (level) {
+            case "1", "5" -> "SIDO";
+            case "2", "6" -> "SIGUNGU";
+            case "3", "7" -> "EUPMYEONDONG";
+            case "4" -> "TONG_BAN";
+            default -> throw new IllegalArgumentException("지원하지 않는 MOIS lv입니다: " + level);
+        };
+    }
+
+    public int collectDailySdotVisitorCount() {
+        return collectSdotVisitorCount(1, 1000);
     }
 
     public int collectSdotVisitorCount(int start, int end) {
@@ -420,6 +637,9 @@ public class DataCollectService {
                 SDOT_VISITOR_COUNT,
                 autonomousDistrict,
                 administrativeDistrict);
+        if (areaCode == null || areaCode.isBlank()) {
+            return java.util.Optional.empty();
+        }
 
         return java.util.Optional.of(new SdotVisitorRow(
                 areaCode,
@@ -445,13 +665,33 @@ public class DataCollectService {
         return LocalDateTime.parse(registeredAt, SDOT_REGISTERED_TIME);
     }
 
+    private boolean hasSeoulOpenApiData(String responseBody) {
+        return responseBody != null && responseBody.contains("\"CODE\":\"INFO-000\"");
+    }
+
+    private Long longValue(JsonNode node, String fieldName) {
+        String value = text(node, fieldName);
+        if (value == null || value.isBlank()) {
+            return 0L;
+        }
+        return Long.parseLong(value.replace(",", ""));
+    }
+
     private int integer(JsonNode node, String fieldName) {
         String value = text(node, fieldName);
         if (value == null || value.isBlank()) {
             return 0;
         }
+        return Integer.parseInt(value.replace(",", ""));
+    }
 
-        return Integer.parseInt(value);
+    private String text(JsonNode node, String fieldName) {
+        JsonNode value = node.path(fieldName);
+        return value.isMissingNode() || value.isNull() ? "" : value.asText().trim();
+    }
+
+    private String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     public String getSdotVisitorCount(int start, int end, String district, String date) {
@@ -464,15 +704,6 @@ public class DataCollectService {
         return dataCollectClient.callSdotVisitorCount(start, end, district, requestDate);
     }
 
-    public String resolveDate(String date) {
-        if(date != null && !date.isBlank()){
-            validateBasicDate(date);
-            return date;
-        }
-        return LocalDate.now(SEOUL_ZONE)
-            .minusDays(1)
-            .format(BASIC_DATE);
-    }
     public String resolveSdotDate(String date){
         if(date != null && !date.isBlank()) {
             validateIsoDate(date);
@@ -481,21 +712,6 @@ public class DataCollectService {
         return LocalDate.now(SEOUL_ZONE)
                 .minusDays(1)
                 .toString();
-    }
-    public String resolveHour(String hour) {
-        if(hour == null || hour.isBlank()) {
-            return "00";
-        }
-        String normalizedHour = hour.length() == 1 ? "0" + hour : hour;
-        if(!normalizedHour.matches("\\d{2}")) {
-            throw dataCollectException.hourFormatException();
-        }
-        
-        int hourValue = Integer.parseInt(normalizedHour);
-        if(hourValue < 0 || hourValue > 23) {
-            throw dataCollectException.hourRangeException();
-        }
-        return normalizedHour;
     }
 
     // start, end 범위 검증
@@ -511,16 +727,12 @@ public class DataCollectService {
         }
     }
 
-    // date 형식 검증
-    public void validateBasicDate(String date){
-        if(!date.matches("\\d{8}")) {
-            throw dataCollectException.basicDateTypeException();
-        }
-    }
     public void validateIsoDate(String date) {
         if(!date.matches("\\d{4}-\\d{2}-\\d{2}")) {
             throw dataCollectException.IsoDateTypeException();
         }
     }
 
+    private record MoisPageResult(int savedCount, int totalCount) {
+    }
 }

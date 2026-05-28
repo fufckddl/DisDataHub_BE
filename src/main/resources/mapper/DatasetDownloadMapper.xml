@@ -2,5 +2,163 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 
 <mapper namespace="com.hub.gisdatahub.download.mapper.DatasetDownloadMapper">
+
+    <select id="findApprovedDownloadDatasetList"
+            resultType="com.hub.gisdatahub.download.dto.DownloadDatasetListItemDto">
+        select 
+            d.dataset_id,
+            d.title,
+            d.description,
+            d.provider,
+            d.created_at,
+            f.file_extension,
+            s.view_count,
+            s.download_count
+        from sd_gis_dataset d
+        left join sd_gis_dataset_file f on d.dataset_id = f.dataset_id
+        left join sd_dataset_stat s on d.dataset_id = s.dataset_id 
+        where d.deleted_at is null 
+            and d.status = 'APPROVED'
+            and d.approved_at is not null
+        order by d.approved_at desc, d.created_at desc;
+    </select>
+
+    <select id="findDatasetDetailById"
+            parameterType="java.lang.Long"
+            resultType="com.hub.gisdatahub.download.dto.DownloadDatasetDetailDto">
+        select
+            dataset_id,
+            title,
+            description,
+            provider,
+            source_type,
+            spatial_type,
+            file_format,
+            original_srid,
+            storage_srid,
+            analysis_srid,
+            is_spatial as spatial,
+            is_public,
+            status,
+            created_at,
+            updated_at
+        from sd_gis_dataset
+        where dataset_id = #{datasetId}
+          and deleted_at is null
+    </select>    
+
+    <select id="findDownloadCountById"
+            parameterType="java.lang.Long"
+            resultType="java.lang.Integer">
+        select download_count
+        from sd_dataset_stat
+        where dataset_id = #{datasetId}
+    </select>
+
+    <select id="findViewCountById"
+            parameterType="java.lang.Long"
+            resultType="java.lang.Integer">
+        select view_count
+        from sd_dataset_stat
+        where dataset_id = #{datasetId}
+    </select>
+
+    <select id="findDatasetStatById"
+            parameterType="java.lang.Long"
+            resultType="com.hub.gisdatahub.download.dto.DatasetStatDto">
+        select
+            dataset_id,
+            view_count,
+            download_count,
+            updated_at,
+            created_at
+        from sd_dataset_stat
+        where dataset_id = #{datasetId}
+    </select>
+
+
+
+    <select id="findSourceFileByDatasetId"
+            parameterType="java.lang.Long"
+            resultType="com.hub.gisdatahub.download.dto.DownloadDatasetFileDto">
+        select
+            file_id,
+            dataset_id,
+            file_role,
+            original_filename,
+            stored_filename,
+            file_path,
+            file_extension,
+            file_size,
+            mime_type,
+            encoding,
+            checksum,
+            created_at
+        from sd_gis_dataset_file
+        where dataset_id = #{datasetId}
+        limit 1
+    </select>
+
+    <!-- 다운로드, 조회수 증가 -->
+    <update id="increaseViewCount">
+        update sd_dataset_stat 
+        set view_count = view_count + 1, updated_at = now()
+        where dataset_id = #{datasetId}
+    </update>
+    <update id="increaseDownloadCount">
+        update sd_dataset_stat 
+        set download_count = download_count + 1, updated_at = now()
+        where dataset_id = #{datasetId}
+    </update>
     
+
+    <!-- 다운로드 , 조회 로그 생성 -->
+    <insert id="insertViewLog"
+            parameterType="com.hub.gisdatahub.download.dto.DatasetViewLogDto">
+        insert into sd_dataset_view_log (dataset_id, user_id, view_ip)
+        values (#{datasetId}, #{userId}, #{viewIp})
+    </insert>
+
+    <insert id="insertDownloadLog"
+            parameterType="com.hub.gisdatahub.download.dto.DownloadLogDto">
+        insert into sd_download_log (
+            dataset_id,
+            file_id,
+            user_id,
+            download_format,
+            download_status,
+            error_message,
+            download_ip
+        )
+        values (
+            #{datasetId},
+            #{fileId},
+            #{userId},
+            #{downloadFormat},
+            #{downloadStatus},
+            #{errorMessage},
+            #{downloadIp}
+        )
+    </insert>   
+
+    <!-- 조회 로그 중복 생성 방지용 -->
+    <select id="countRecentViewByUser"
+            resultType="java.lang.Integer">
+        select count(*)
+        from sd_dataset_view_log
+        where dataset_id = #{datasetId}
+        and user_id = #{userId}
+        and created_at >= #{fromTime}
+    </select>    
+
+    <select id="countRecentViewByIp"
+            resultType="java.lang.Integer">
+        select count(*)
+        from sd_dataset_view_log
+        where dataset_id = #{datasetId}
+        and user_id is null
+        and view_ip = #{viewIp}
+        and created_at >= #{fromTime}
+    </select>    
+
 </mapper>

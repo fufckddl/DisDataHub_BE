@@ -6,6 +6,7 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -13,6 +14,7 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.hub.gisdatahub.dashboard.dto.AreaNavigationResponse;
 import com.hub.gisdatahub.dashboard.dto.AreaPopulationChartResponse;
 import com.hub.gisdatahub.dashboard.dto.AreaPopulationDto;
 import com.hub.gisdatahub.dashboard.dto.FloatingPopulationChartResponse;
@@ -31,9 +33,143 @@ public class DashboardBoundaryService {
     private static final double MAX_SIGUNGU_BBOX_AREA = 25.0;
     private static final double MAX_EUPMYEONDONG_BBOX_AREA = 2.0;
     private static final double MAX_JIPGYEGU_BBOX_AREA = 0.5;
+    private static final String NAVIGATION_PROPERTIES_SQL = """
+                            'parentAreaCode', (
+                                SELECT p.area_code
+                                FROM public.sd_area_code p
+                                WHERE p.is_active = TRUE
+                                  AND (
+                                      (c.level = 'SIGUNGU'
+                                       AND p.level = 'SIDO'
+                                       AND p.sido_code = c.sido_code)
+                                      OR (
+                                          c.level = 'EUPMYEONDONG'
+                                          AND p.level = 'SIGUNGU'
+                                          AND p.sido_code = c.sido_code
+                                          AND p.sigungu_code = c.sigungu_code
+                                      )
+                                      OR (
+                                          c.level = 'JIPGYEGU'
+                                          AND p.level = 'EUPMYEONDONG'
+                                          AND p.sido_code = c.sido_code
+                                          AND p.sigungu_code = c.sigungu_code
+                                          AND p.eupmyeondong_code = c.eupmyeondong_code
+                                      )
+                                  )
+                                ORDER BY p.area_code
+                                LIMIT 1
+                            ),
+                            'parentName', (
+                                SELECT p.name
+                                FROM public.sd_area_code p
+                                WHERE p.is_active = TRUE
+                                  AND (
+                                      (c.level = 'SIGUNGU'
+                                       AND p.level = 'SIDO'
+                                       AND p.sido_code = c.sido_code)
+                                      OR (
+                                          c.level = 'EUPMYEONDONG'
+                                          AND p.level = 'SIGUNGU'
+                                          AND p.sido_code = c.sido_code
+                                          AND p.sigungu_code = c.sigungu_code
+                                      )
+                                      OR (
+                                          c.level = 'JIPGYEGU'
+                                          AND p.level = 'EUPMYEONDONG'
+                                          AND p.sido_code = c.sido_code
+                                          AND p.sigungu_code = c.sigungu_code
+                                          AND p.eupmyeondong_code = c.eupmyeondong_code
+                                      )
+                                  )
+                                ORDER BY p.area_code
+                                LIMIT 1
+                            ),
+                            'parentAreaName', (
+                                SELECT p.name
+                                FROM public.sd_area_code p
+                                WHERE p.is_active = TRUE
+                                  AND (
+                                      (c.level = 'SIGUNGU'
+                                       AND p.level = 'SIDO'
+                                       AND p.sido_code = c.sido_code)
+                                      OR (
+                                          c.level = 'EUPMYEONDONG'
+                                          AND p.level = 'SIGUNGU'
+                                          AND p.sido_code = c.sido_code
+                                          AND p.sigungu_code = c.sigungu_code
+                                      )
+                                      OR (
+                                          c.level = 'JIPGYEGU'
+                                          AND p.level = 'EUPMYEONDONG'
+                                          AND p.sido_code = c.sido_code
+                                          AND p.sigungu_code = c.sigungu_code
+                                          AND p.eupmyeondong_code = c.eupmyeondong_code
+                                      )
+                                  )
+                                ORDER BY p.area_code
+                                LIMIT 1
+                            ),
+                            'parentFullName', (
+                                SELECT p.full_name
+                                FROM public.sd_area_code p
+                                WHERE p.is_active = TRUE
+                                  AND (
+                                      (c.level = 'SIGUNGU'
+                                       AND p.level = 'SIDO'
+                                       AND p.sido_code = c.sido_code)
+                                      OR (
+                                          c.level = 'EUPMYEONDONG'
+                                          AND p.level = 'SIGUNGU'
+                                          AND p.sido_code = c.sido_code
+                                          AND p.sigungu_code = c.sigungu_code
+                                      )
+                                      OR (
+                                          c.level = 'JIPGYEGU'
+                                          AND p.level = 'EUPMYEONDONG'
+                                          AND p.sido_code = c.sido_code
+                                          AND p.sigungu_code = c.sigungu_code
+                                          AND p.eupmyeondong_code = c.eupmyeondong_code
+                                      )
+                                  )
+                                ORDER BY p.area_code
+                                LIMIT 1
+                            ),
+                            'parentLevel', (
+                                SELECT p.level
+                                FROM public.sd_area_code p
+                                WHERE p.is_active = TRUE
+                                  AND (
+                                      (c.level = 'SIGUNGU'
+                                       AND p.level = 'SIDO'
+                                       AND p.sido_code = c.sido_code)
+                                      OR (
+                                          c.level = 'EUPMYEONDONG'
+                                          AND p.level = 'SIGUNGU'
+                                          AND p.sido_code = c.sido_code
+                                          AND p.sigungu_code = c.sigungu_code
+                                      )
+                                      OR (
+                                          c.level = 'JIPGYEGU'
+                                          AND p.level = 'EUPMYEONDONG'
+                                          AND p.sido_code = c.sido_code
+                                          AND p.sigungu_code = c.sigungu_code
+                                          AND p.eupmyeondong_code = c.eupmyeondong_code
+                                      )
+                                  )
+                                ORDER BY p.area_code
+                                LIMIT 1
+                            ),
+                            'childLevel', CASE c.level
+                                WHEN 'SIDO' THEN 'SIGUNGU'
+                                WHEN 'SIGUNGU' THEN 'EUPMYEONDONG'
+                                WHEN 'EUPMYEONDONG' THEN 'JIPGYEGU'
+                                ELSE NULL
+                            END,
+                            'canDrillDown', c.level != 'JIPGYEGU'
+            """;
     private static final List<String> POPULATION_AGE_LABELS = List.of(
-            "0-9", "10-14", "15-19", "20-24", "25-29", "30-34", "35-39",
-            "40-44", "45-49", "50-54", "55-59", "60-64", "65-69", "70-74");
+            "0-9", "10-19", "20-29", "30-39", "40-49", "50-59",
+            "60-69", "70-79", "80-89", "90-99", "100+");
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
     private final DashboardPopulationMapper populationMapper;
@@ -67,6 +203,24 @@ public class DashboardBoundaryService {
         return getJipgyeguBoundaries(resolvedSidoCode, resolvedParentAreaCode, resolvedBbox);
     }
 
+    public AreaNavigationResponse getAreaNavigation(String areaCode) {
+        AreaMeta areaMeta = findAreaMeta(resolveAreaCode(areaCode));
+        Optional<AreaMeta> parentArea = findParentAreaMeta(areaMeta);
+
+        return AreaNavigationResponse.builder()
+                .areaCode(areaMeta.areaCode())
+                .areaName(areaMeta.name())
+                .fullName(areaMeta.fullName())
+                .areaLevel(areaMeta.level())
+                .parentAreaCode(parentArea.map(AreaMeta::areaCode).orElse(null))
+                .parentAreaName(parentArea.map(AreaMeta::name).orElse(null))
+                .parentFullName(parentArea.map(AreaMeta::fullName).orElse(null))
+                .parentLevel(parentArea.map(AreaMeta::level).orElse(null))
+                .childLevel(childLevel(areaMeta.level()).orElse(null))
+                .canDrillDown(childLevel(areaMeta.level()).isPresent())
+                .build();
+    }
+
     public AreaPopulationChartResponse getAreaPopulation(String areaCode, String areaLevel, String date, String hour) {
         String resolvedAreaCode = resolveAreaCode(areaCode);
         String resolvedAreaLevel = resolveAreaLevel(areaLevel, "SIGUNGU");
@@ -82,7 +236,7 @@ public class DashboardBoundaryService {
         if (population == null) {
             throw new ResponseStatusException(
                         HttpStatus.NOT_FOUND,
-                        "조회 가능한 생활인구 데이터가 없습니다.");
+                        "조회 가능한 주민등록 인구 데이터가 없습니다.");
         }
 
         return AreaPopulationChartResponse.builder()
@@ -127,7 +281,7 @@ public class DashboardBoundaryService {
         String resolvedHour = resolveHour(hour);
 
         List<FloatingPopulationPoint> points = findFloatingPopulationPoints(
-                resolvedAreaCode,
+                areaMeta.areaCode(),
                 resolvedAreaLevel,
                 resolvedDate,
                 resolvedHour);
@@ -203,7 +357,8 @@ public class DashboardBoundaryService {
                             'eupmyeondongCode', c.eupmyeondong_code,
                             'name', c.name,
                             'fullName', c.full_name,
-                            'level', c.level
+                            'level', c.level,
+%s
                         )
                     ) AS feature
                     FROM public.sd_area_code c
@@ -236,7 +391,7 @@ public class DashboardBoundaryService {
                     'features', COALESCE(jsonb_agg(feature), '[]'::jsonb)
                 )::text
                 FROM features
-                """.formatted(sidoFilter);
+                """.formatted(NAVIGATION_PROPERTIES_SQL, sidoFilter);
 
         String geoJson = queryGeoJson(sql, sidoCode, null, bbox);
         return geoJson == null ? EMPTY_FEATURE_COLLECTION : geoJson;
@@ -257,7 +412,8 @@ public class DashboardBoundaryService {
                             'eupmyeondongCode', c.eupmyeondong_code,
                             'name', c.name,
                             'fullName', c.full_name,
-                            'level', c.level
+                            'level', c.level,
+%s
                         )
                     ) AS feature
                     FROM public.sd_area_boundary b
@@ -279,7 +435,7 @@ public class DashboardBoundaryService {
                     'features', COALESCE(jsonb_agg(feature), '[]'::jsonb)
                 )::text
                 FROM features
-                """.formatted(sidoFilter, parentFilter);
+                """.formatted(NAVIGATION_PROPERTIES_SQL, sidoFilter, parentFilter);
 
         String geoJson = queryGeoJson(sql, sidoCode, parentAreaCode, bbox);
         return geoJson == null ? EMPTY_FEATURE_COLLECTION : geoJson;
@@ -300,7 +456,8 @@ public class DashboardBoundaryService {
                             'eupmyeondongCode', c.eupmyeondong_code,
                             'name', c.name,
                             'fullName', c.full_name,
-                            'level', c.level
+                            'level', c.level,
+%s
                         )
                     ) AS feature
                     FROM public.sd_area_boundary b
@@ -322,7 +479,7 @@ public class DashboardBoundaryService {
                     'features', COALESCE(jsonb_agg(feature), '[]'::jsonb)
                 )::text
                 FROM features
-                """.formatted(sidoFilter, parentFilter);
+                """.formatted(NAVIGATION_PROPERTIES_SQL, sidoFilter, parentFilter);
 
         String geoJson = queryGeoJson(sql, sidoCode, parentAreaCode, bbox);
         return geoJson == null ? EMPTY_FEATURE_COLLECTION : geoJson;
@@ -343,7 +500,8 @@ public class DashboardBoundaryService {
                             'eupmyeondongCode', c.eupmyeondong_code,
                             'name', c.name,
                             'fullName', c.full_name,
-                            'level', c.level
+                            'level', c.level,
+%s
                         )
                     ) AS feature
                     FROM public.sd_area_boundary b
@@ -365,7 +523,7 @@ public class DashboardBoundaryService {
                     'features', COALESCE(jsonb_agg(feature), '[]'::jsonb)
                 )::text
                 FROM features
-                """.formatted(sidoFilter, parentFilter);
+                """.formatted(NAVIGATION_PROPERTIES_SQL, sidoFilter, parentFilter);
 
         String geoJson = queryGeoJson(sql, sidoCode, parentAreaCode, bbox);
         return geoJson == null ? EMPTY_FEATURE_COLLECTION : geoJson;
@@ -597,37 +755,31 @@ public class DashboardBoundaryService {
     private List<BigDecimal> maleAgeData(AreaPopulationDto population) {
         return List.of(
                 zeroIfNull(population.getMale0To9()),
-                zeroIfNull(population.getMale10To14()),
-                zeroIfNull(population.getMale15To19()),
-                zeroIfNull(population.getMale20To24()),
-                zeroIfNull(population.getMale25To29()),
-                zeroIfNull(population.getMale30To34()),
-                zeroIfNull(population.getMale35To39()),
-                zeroIfNull(population.getMale40To44()),
-                zeroIfNull(population.getMale45To49()),
-                zeroIfNull(population.getMale50To54()),
-                zeroIfNull(population.getMale55To59()),
-                zeroIfNull(population.getMale60To64()),
-                zeroIfNull(population.getMale65To69()),
-                zeroIfNull(population.getMale70To74()));
+                zeroIfNull(population.getMale10To19()),
+                zeroIfNull(population.getMale20To29()),
+                zeroIfNull(population.getMale30To39()),
+                zeroIfNull(population.getMale40To49()),
+                zeroIfNull(population.getMale50To59()),
+                zeroIfNull(population.getMale60To69()),
+                zeroIfNull(population.getMale70To79()),
+                zeroIfNull(population.getMale80To89()),
+                zeroIfNull(population.getMale90To99()),
+                zeroIfNull(population.getMale100Over()));
     }
 
     private List<BigDecimal> femaleAgeData(AreaPopulationDto population) {
         return List.of(
                 zeroIfNull(population.getFemale0To9()),
-                zeroIfNull(population.getFemale10To14()),
-                zeroIfNull(population.getFemale15To19()),
-                zeroIfNull(population.getFemale20To24()),
-                zeroIfNull(population.getFemale25To29()),
-                zeroIfNull(population.getFemale30To34()),
-                zeroIfNull(population.getFemale35To39()),
-                zeroIfNull(population.getFemale40To44()),
-                zeroIfNull(population.getFemale45To49()),
-                zeroIfNull(population.getFemale50To54()),
-                zeroIfNull(population.getFemale55To59()),
-                zeroIfNull(population.getFemale60To64()),
-                zeroIfNull(population.getFemale65To69()),
-                zeroIfNull(population.getFemale70To74()));
+                zeroIfNull(population.getFemale10To19()),
+                zeroIfNull(population.getFemale20To29()),
+                zeroIfNull(population.getFemale30To39()),
+                zeroIfNull(population.getFemale40To49()),
+                zeroIfNull(population.getFemale50To59()),
+                zeroIfNull(population.getFemale60To69()),
+                zeroIfNull(population.getFemale70To79()),
+                zeroIfNull(population.getFemale80To89()),
+                zeroIfNull(population.getFemale90To99()),
+                zeroIfNull(population.getFemale100Over()));
     }
 
     private BigDecimal zeroIfNull(BigDecimal value) {
@@ -636,16 +788,60 @@ public class DashboardBoundaryService {
 
     private AreaMeta findAreaMeta(String areaCode) {
         String sql = """
-                SELECT
-                    area_code,
-                    sido_code,
-                    sigungu_code,
-                    eupmyeondong_code,
-                    name,
-                    full_name,
-                    level
-                FROM public.sd_area_code
-                WHERE area_code = :areaCode
+                SELECT *
+                FROM (
+                    SELECT
+                        area_code,
+                        sido_code,
+                        sigungu_code,
+                        eupmyeondong_code,
+                        name,
+                        full_name,
+                        level,
+                        CASE
+                            WHEN area_code = :areaCode THEN 0
+                            WHEN LENGTH(:areaCode) = 5
+                                 AND level = 'SIGUNGU'
+                                 AND sigungu_code = :areaCode THEN 1
+                            WHEN LENGTH(:areaCode) = 10
+                                 AND SUBSTRING(:areaCode, 6, 5) = '00000'
+                                 AND level = 'SIGUNGU'
+                                 AND sigungu_code = SUBSTRING(:areaCode, 1, 5) THEN 2
+                            WHEN LENGTH(:areaCode) = 8
+                                 AND level = 'EUPMYEONDONG'
+                                 AND eupmyeondong_code = :areaCode THEN 3
+                            WHEN LENGTH(:areaCode) = 10
+                                 AND SUBSTRING(:areaCode, 9, 2) = '00'
+                                 AND level = 'EUPMYEONDONG'
+                                 AND eupmyeondong_code = SUBSTRING(:areaCode, 1, 8) THEN 4
+                            ELSE 9
+                        END AS match_priority
+                    FROM public.sd_area_code
+                    WHERE area_code = :areaCode
+                       OR (
+                           LENGTH(:areaCode) = 5
+                           AND level = 'SIGUNGU'
+                           AND sigungu_code = :areaCode
+                       )
+                       OR (
+                           LENGTH(:areaCode) = 10
+                           AND SUBSTRING(:areaCode, 6, 5) = '00000'
+                           AND level = 'SIGUNGU'
+                           AND sigungu_code = SUBSTRING(:areaCode, 1, 5)
+                       )
+                       OR (
+                           LENGTH(:areaCode) = 8
+                           AND level = 'EUPMYEONDONG'
+                           AND eupmyeondong_code = :areaCode
+                       )
+                       OR (
+                           LENGTH(:areaCode) = 10
+                           AND SUBSTRING(:areaCode, 9, 2) = '00'
+                           AND level = 'EUPMYEONDONG'
+                           AND eupmyeondong_code = SUBSTRING(:areaCode, 1, 8)
+                       )
+                ) matched_area
+                ORDER BY match_priority, area_code
                 LIMIT 1
                 """;
 
@@ -663,6 +859,60 @@ public class DashboardBoundaryService {
         return areas.get(0);
     }
 
+    private Optional<AreaMeta> findParentAreaMeta(AreaMeta areaMeta) {
+        String sql = """
+                SELECT
+                    area_code,
+                    sido_code,
+                    sigungu_code,
+                    eupmyeondong_code,
+                    name,
+                    full_name,
+                    level
+                FROM public.sd_area_code p
+                WHERE p.is_active = TRUE
+                  AND (
+                      (:areaLevel = 'SIGUNGU'
+                       AND p.level = 'SIDO'
+                       AND p.sido_code = :sidoCode)
+                      OR (
+                          :areaLevel = 'EUPMYEONDONG'
+                          AND p.level = 'SIGUNGU'
+                          AND p.sido_code = :sidoCode
+                          AND p.sigungu_code = :sigunguCode
+                      )
+                      OR (
+                          :areaLevel = 'JIPGYEGU'
+                          AND p.level = 'EUPMYEONDONG'
+                          AND p.sido_code = :sidoCode
+                          AND p.sigungu_code = :sigunguCode
+                          AND p.eupmyeondong_code = :eupmyeondongCode
+                      )
+                  )
+                ORDER BY p.area_code
+                LIMIT 1
+                """;
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("areaLevel", areaMeta.level())
+                .addValue("sidoCode", areaMeta.sidoCode())
+                .addValue("sigunguCode", areaMeta.sigunguCode())
+                .addValue("eupmyeondongCode", areaMeta.eupmyeondongCode());
+
+        return jdbcTemplate.query(sql, params, (rs, rowNum) -> mapAreaMeta(rs))
+                .stream()
+                .findFirst();
+    }
+
+    private Optional<String> childLevel(String areaLevel) {
+        return switch (areaLevel) {
+            case "SIDO" -> Optional.of("SIGUNGU");
+            case "SIGUNGU" -> Optional.of("EUPMYEONDONG");
+            case "EUPMYEONDONG" -> Optional.of("JIPGYEGU");
+            default -> Optional.empty();
+        };
+    }
+
     private List<FloatingPopulationPoint> findFloatingPopulationPoints(
             String areaCode,
             String areaLevel,
@@ -671,7 +921,7 @@ public class DashboardBoundaryService {
         String dateFilter = baseDate == null ? "" : "AND f.base_date = :baseDate";
         String hourFilter = hour == null ? "" : "AND f.hour = :hour";
         String labelExpression = "SIDO".equals(areaLevel)
-                ? "COALESCE(ac.name, NULLIF(f.autonomous_district, ''), '미분류')"
+                ? "COALESCE(sg.name, ac.name, NULLIF(f.autonomous_district, ''), '미분류')"
                 : "COALESCE(NULLIF(f.administrative_district, ''), NULLIF(f.autonomous_district, ''), '미분류')";
 
         String sql = """
@@ -687,61 +937,89 @@ public class DashboardBoundaryService {
                     LIMIT 1
                 ),
                 scope_candidates AS (
-                    SELECT c.area_code, 1 AS priority
-                    FROM public.sd_area_code c
-                    CROSS JOIN selected_area s
-                    WHERE :areaLevel = 'SIDO'
-                      AND c.level = 'SIGUNGU'
-                      AND c.sido_code = s.sido_code
+                    SELECT DISTINCT area_code, priority
+                    FROM (
+                        SELECT c.area_code, 1 AS priority
+                        FROM public.sd_area_code c
+                        CROSS JOIN selected_area s
+                        WHERE :areaLevel = 'SIDO'
+                          AND c.level = 'EUPMYEONDONG'
+                          AND c.sido_code = s.sido_code
 
-                    UNION ALL
+                        UNION ALL
 
-                    SELECT s.area_code, 1 AS priority
-                    FROM selected_area s
-                    WHERE :areaLevel = 'SIGUNGU'
+                        SELECT c.area_code, 2 AS priority
+                        FROM public.sd_area_code c
+                        CROSS JOIN selected_area s
+                        WHERE :areaLevel = 'SIDO'
+                          AND c.level = 'SIGUNGU'
+                          AND c.sido_code = s.sido_code
 
-                    UNION ALL
+                        UNION ALL
 
-                    SELECT s.area_code, 1 AS priority
-                    FROM selected_area s
-                    WHERE :areaLevel = 'EUPMYEONDONG'
+                        SELECT s.area_code, 3 AS priority
+                        FROM selected_area s
+                        WHERE :areaLevel = 'SIDO'
 
-                    UNION ALL
+                        UNION ALL
 
-                    SELECT s.area_code, 1 AS priority
-                    FROM selected_area s
-                    WHERE :areaLevel = 'JIPGYEGU'
+                        SELECT c.area_code, 1 AS priority
+                        FROM public.sd_area_code c
+                        CROSS JOIN selected_area s
+                        WHERE :areaLevel = 'SIGUNGU'
+                          AND c.level = 'EUPMYEONDONG'
+                          AND c.sido_code = s.sido_code
+                          AND c.sigungu_code = s.sigungu_code
 
-                    UNION ALL
+                        UNION ALL
 
-                    SELECT c.area_code, 2 AS priority
-                    FROM public.sd_area_code c
-                    CROSS JOIN selected_area s
-                    WHERE :areaLevel = 'JIPGYEGU'
-                      AND c.level = 'EUPMYEONDONG'
-                      AND c.sido_code = s.sido_code
-                      AND c.sigungu_code = s.sigungu_code
-                      AND c.eupmyeondong_code = s.eupmyeondong_code
+                        SELECT s.area_code, 2 AS priority
+                        FROM selected_area s
+                        WHERE :areaLevel = 'SIGUNGU'
 
-                    UNION ALL
+                        UNION ALL
 
-                    SELECT c.area_code, 2 AS priority
-                    FROM public.sd_area_code c
-                    CROSS JOIN selected_area s
-                    WHERE :areaLevel = 'EUPMYEONDONG'
-                      AND c.level = 'SIGUNGU'
-                      AND c.sido_code = s.sido_code
-                      AND c.sigungu_code = s.sigungu_code
+                        SELECT s.area_code, 1 AS priority
+                        FROM selected_area s
+                        WHERE :areaLevel = 'EUPMYEONDONG'
 
-                    UNION ALL
+                        UNION ALL
 
-                    SELECT c.area_code, 3 AS priority
-                    FROM public.sd_area_code c
-                    CROSS JOIN selected_area s
-                    WHERE :areaLevel = 'JIPGYEGU'
-                      AND c.level = 'SIGUNGU'
-                      AND c.sido_code = s.sido_code
-                      AND c.sigungu_code = s.sigungu_code
+                        SELECT s.area_code, 1 AS priority
+                        FROM selected_area s
+                        WHERE :areaLevel = 'JIPGYEGU'
+
+                        UNION ALL
+
+                        SELECT c.area_code, 2 AS priority
+                        FROM public.sd_area_code c
+                        CROSS JOIN selected_area s
+                        WHERE :areaLevel = 'JIPGYEGU'
+                          AND c.level = 'EUPMYEONDONG'
+                          AND c.sido_code = s.sido_code
+                          AND c.sigungu_code = s.sigungu_code
+                          AND c.eupmyeondong_code = s.eupmyeondong_code
+
+                        UNION ALL
+
+                        SELECT c.area_code, 2 AS priority
+                        FROM public.sd_area_code c
+                        CROSS JOIN selected_area s
+                        WHERE :areaLevel = 'EUPMYEONDONG'
+                          AND c.level = 'SIGUNGU'
+                          AND c.sido_code = s.sido_code
+                          AND c.sigungu_code = s.sigungu_code
+
+                        UNION ALL
+
+                        SELECT c.area_code, 3 AS priority
+                        FROM public.sd_area_code c
+                        CROSS JOIN selected_area s
+                        WHERE :areaLevel = 'JIPGYEGU'
+                          AND c.level = 'SIGUNGU'
+                          AND c.sido_code = s.sido_code
+                          AND c.sigungu_code = s.sigungu_code
+                    ) candidate
                 ),
                 available_priority AS (
                     SELECT MIN(sc.priority) AS priority
@@ -792,6 +1070,10 @@ public class DashboardBoundaryService {
                     FROM target_rows f
                     LEFT JOIN public.sd_area_code ac
                         ON ac.area_code = f.area_code
+                    LEFT JOIN public.sd_area_code sg
+                        ON sg.level = 'SIGUNGU'
+                       AND sg.sido_code = ac.sido_code
+                       AND sg.sigungu_code = ac.sigungu_code
                     GROUP BY label
                 )
                 SELECT

@@ -6,6 +6,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.hub.gisdatahub.dashboard.dto.AreaNavigationResponse;
 import com.hub.gisdatahub.dashboard.dto.AreaPopulationChartResponse;
 import com.hub.gisdatahub.dashboard.dto.FloatingPopulationChartResponse;
 import com.hub.gisdatahub.dashboard.service.DashboardBoundaryService;
@@ -28,6 +29,12 @@ public class DashboardBoundaryController {
             @RequestParam(required = false) String bbox) {
         return dashboardBoundaryService.getAreaBoundaries(level, sidoCode, parentAreaCode, bbox);
     }
+
+    @GetMapping("/area-navigation")
+    public AreaNavigationResponse getAreaNavigation(@RequestParam String areaCode) {
+        return dashboardBoundaryService.getAreaNavigation(areaCode);
+    }
+
     @GetMapping("/population")
     public AreaPopulationChartResponse getAreaPopulation(
         @RequestParam String areaCode,

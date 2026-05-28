@@ -4,17 +4,17 @@ import java.time.LocalDateTime;
 
 import lombok.Data;
 
-// 파일 목록 나열 위한 DTO
+// 원본 파일 메타데이터 DTO
 @Data
 public class DownloadDatasetFileDto {
-    private long fileId;
-    private long datasetId;
+    private Long fileId;
+    private Long datasetId;
     private String fileRole;
     private String originalFilename;
     private String storedFilename;
     private String filePath;
     private String fileExtension;
-    private String fileSize;
+    private Long fileSize;
     private String mimeType;
     private String encoding;
     private String checksum;
