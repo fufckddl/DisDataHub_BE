@@ -135,6 +135,11 @@
         )
     </insert>
 
+    <insert id="insertDatasetStat" parameterType="long">
+        INSERT INTO sd_dataset_stat (dataset_id)
+        VALUES (#{datasetId})
+    </insert>
+
     <update id="updateFileInfo" parameterType="DatasetUploadDto">
         UPDATE sd_gis_dataset_file
         SET stored_filename = #{storedFilename},

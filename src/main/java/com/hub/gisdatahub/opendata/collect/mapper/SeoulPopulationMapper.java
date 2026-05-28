@@ -15,6 +15,9 @@ public interface SeoulPopulationMapper {
     // sd_area_population FK 저장 전에 sd_area_code에 존재하는 지역코드인지 확인합니다.
     boolean existsAreaCode(String areaCode);
 
+    // 서울 생활인구 OpenAPI의 5자리 자치구/8자리 행정동 코드를 sd_area_code.area_code로 매핑합니다.
+    String findAreaCodeByLivingPopulationApiCode(String apiAreaCode);
+
     // 서울 생활인구 OpenAPI 응답을 지역/출처/기준일/시간 기준으로 저장하거나 갱신합니다.
     void upsert(SeoulPopulationRow row);
 }

@@ -7,9 +7,9 @@ import lombok.Data;
 // 다운로드 로그
 @Data
 public class DownloadLogDto {
-    private Integer downloadId;
-    private Integer datasetId;
-    private Integer fileId;
+    private Long downloadId;
+    private Long datasetId;
+    private Long fileId;
     private Integer userId;
     private String downloadFormat;
     private String downloadStatus;
