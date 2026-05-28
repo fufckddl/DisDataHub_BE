@@ -22,4 +22,23 @@ public class NoticeServiceImpl implements NoticeService {
     public BoardPostDto getNoticeDetailData(Long postId) {
         return noticeSqlMapper.findByNoticeDetailData(postId);
     }
+
+    public void createNoticePost(BoardPostDto boardPostDto) {
+        if (boardPostDto.getVisibilityStatus() == null) {
+            boardPostDto.setVisibilityStatus("PUBLIC");
+        }
+
+        if (boardPostDto.getPinnedYn() == null) {
+            boardPostDto.setPinnedYn("N");
+        }
+        
+        noticeSqlMapper.insertNotice(boardPostDto);
+    }
+
+    @Override
+    public List<BoardPostDto> getAdminNoticeList() {
+        return noticeSqlMapper.findAdminNoticeList();
+    }
+
+    
 }

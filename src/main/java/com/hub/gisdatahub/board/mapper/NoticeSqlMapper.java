@@ -12,6 +12,11 @@ public interface NoticeSqlMapper {
     public List<BoardPostDto> findByNoticeList();
 
     // 공지사랑 상세페이지
-    public BoardPostDto findByNoticeDetailData(Long postID);
+    public BoardPostDto findByNoticeDetailData(Long postId);
+
+    // 공지사항 작성페이지
+    public void insertNotice(BoardPostDto boardPostDto);
+    // 관리자 페이지 공지사항 리스트
+    public List<BoardPostDto> findAdminNoticeList();
 }
 

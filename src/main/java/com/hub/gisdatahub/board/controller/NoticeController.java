@@ -7,6 +7,8 @@ import java.util.Map;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -32,13 +34,38 @@ public class NoticeController {
         return response;
     }
 
-    public Map<String, Object> findNoticeDetail(@PathVariable Long postId) {
+    @GetMapping("{postId}")
+    public Map<String, Object> findNoticeDetail(@PathVariable("postId") Long postId) {
         Map<String, Object> response = new HashMap<>();
 
         BoardPostDto noticeDetail = noticeService.getNoticeDetailData(postId);
 
         response.put("noticeDetail", noticeDetail);
         response.put("result", "success");
+
+        return response;
+    }
+
+    @PostMapping("createNotice")
+    public Map<String, Object> createNotice(@RequestBody BoardPostDto boardPostDto) {
+        Map<String, Object> response = new HashMap<>();
+
+        noticeService.createNoticePost(boardPostDto);
+
+        response.put("result", "success");
+        response.put("postId", boardPostDto.getPostId());
+
+        return response;
+    }
+
+    @GetMapping("adminNoticeList")
+    public Map<String, Object> adminNoticeList() {
+        Map<String, Object> response = new HashMap<>();
+
+        List<BoardPostDto> adminNotice = noticeService.getAdminNoticeList();
+
+        response.put("result", "success");
+        response.put("adminNotice", adminNotice);
 
         return response;
     }

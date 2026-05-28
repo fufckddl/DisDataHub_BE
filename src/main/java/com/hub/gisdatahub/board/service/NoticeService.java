@@ -8,4 +8,8 @@ public interface NoticeService {
     public List<BoardPostDto> getNoticeList();
 
     public BoardPostDto getNoticeDetailData(Long postId);
+
+    public void createNoticePost(BoardPostDto boardPostDto);
+
+    public List<BoardPostDto> getAdminNoticeList();
 }

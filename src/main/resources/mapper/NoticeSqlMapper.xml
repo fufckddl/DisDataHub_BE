@@ -35,8 +35,53 @@
             updated_at,
             deleted_yn
         FROM sd_board_post 
-        WHERE post_id = {id}
+        WHERE post_id = {postId}
             AND board_type_code = 'NOTICE'
             AND deleted_yn = 'N'
     </select>
+
+    <insert id="insertNotice"
+            parameterType="com.hub.gisdatahub.board.dto.BoardPostDto"
+            useGeneratedKeys="true"
+            keyProperty="postId"
+            keyColumn="post_id">
+        INSERT INTO sd_board_post (
+            board_type_code,
+            user_id,
+            title,
+            content,
+            visibility_status,
+            pinned_yn
+        )
+        VALUES (
+            'NOTICE',
+            #{userId},
+            #{title},
+            #{content},
+            #{visibilityStatus},
+            #{pinnedYn}
+        )
+    </insert>
+
+    <!-- 관리자 공지사항 조회 커리 -->
+    <select id="findAdminNoticeList"
+            resultType="com.hub.gisdatahub.board.dto.BoardPostDto">
+        SELECT
+            post_id,
+            board_type_code,
+            user_id,
+            title,
+            content,
+            visibility_status,
+            pinned_yn,
+            created_at,
+            view_count,
+            updated_at,
+            deleted_yn
+        FROM sd_board_post
+        WHERE board_type_code = 'NOTICE'
+            AND deleted_yn = 'N'
+        ORDER BY pinned_yn DESC, created_at DESC
+    </select>
+    
 </mapper>
