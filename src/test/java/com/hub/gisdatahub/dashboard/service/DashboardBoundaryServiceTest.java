@@ -2,9 +2,9 @@ package com.hub.gisdatahub.dashboard.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
@@ -15,9 +15,11 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
 import com.hub.gisdatahub.dashboard.dto.AreaNavigationResponse;
@@ -41,6 +43,35 @@ class DashboardBoundaryServiceTest {
         service = new DashboardBoundaryService(jdbcTemplate, populationMapper);
     }
 
+
+
+    @Test
+    void getAreaBoundariesIncludesNavigationPropertiesForPolygonBackButton() {
+        when(jdbcTemplate.queryForObject(
+                any(String.class),
+                any(MapSqlParameterSource.class),
+                any(Class.class)))
+                .thenReturn("{\"type\":\"FeatureCollection\",\"features\":[]}");
+
+        String response = service.getAreaBoundaries("SIGUNGU", null, "41", null);
+
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<MapSqlParameterSource> paramsCaptor = ArgumentCaptor.forClass(MapSqlParameterSource.class);
+        verify(jdbcTemplate).queryForObject(sqlCaptor.capture(), paramsCaptor.capture(), any(Class.class));
+
+        assertThat(response).contains("FeatureCollection");
+        assertThat(sqlCaptor.getValue())
+                .contains("'parentAreaCode'")
+                .contains("'parentName'")
+                .contains("'parentFullName'")
+                .contains("'parentLevel'")
+                .contains("'childLevel'")
+                .contains("'canDrillDown'")
+                .contains("p.area_code = :parentAreaCode")
+                .contains("p.level = 'SIDO'");
+        assertThat(paramsCaptor.getValue().getValue("parentAreaCode")).isEqualTo("41");
+        verifyNoInteractions(populationMapper);
+    }
 
     @Test
     void getAreaNavigationReturnsParentAndChildLevelsForSigunguBackButton() {
@@ -208,6 +239,7 @@ class DashboardBoundaryServiceTest {
         assertThat(response.getAreaCode()).isEqualTo("1101053010001");
         assertThat(response.getFullName()).isEqualTo("서울특별시 종로구 사직동 집계구");
     }
+    @SuppressWarnings({"unchecked", "rawtypes"})
     private void stubAreaNavigationQueries(Map<String, Object> areaRow, Map<String, Object> parentRow) {
         when(jdbcTemplate.query(
                 any(String.class),
