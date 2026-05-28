@@ -20,6 +20,7 @@ seoul:
     key: ${SEOUL_OPENDATA_KEY:}
     base-url: http://openapi.seoul.go.kr:8088
     living-population-collect-cron: ${SEOUL_LIVING_POPULATION_COLLECT_CRON:0 0 3 * * *}
+    sdot-visitor-collect-cron: ${SEOUL_SDOT_VISITOR_COLLECT_CRON:0 20 3 * * *}
     district-living-population-service-name: SPOP_LOCAL_RESD_PPLTN
     air-quality-start: 1
     air-quality-end: 25

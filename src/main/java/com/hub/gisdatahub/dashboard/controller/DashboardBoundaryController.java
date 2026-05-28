@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.hub.gisdatahub.dashboard.dto.AreaPopulationChartResponse;
+import com.hub.gisdatahub.dashboard.dto.FloatingPopulationChartResponse;
 import com.hub.gisdatahub.dashboard.service.DashboardBoundaryService;
 
 @RestController
@@ -23,15 +24,27 @@ public class DashboardBoundaryController {
     public String getAreaBoundaries(
             @RequestParam(defaultValue = "SIGUNGU") String level,
             @RequestParam(required = false) String sidoCode,
+            @RequestParam(required = false) String parentAreaCode,
             @RequestParam(required = false) String bbox) {
-        return dashboardBoundaryService.getAreaBoundaries(level, sidoCode, bbox);
+        return dashboardBoundaryService.getAreaBoundaries(level, sidoCode, parentAreaCode, bbox);
     }
     @GetMapping("/population")
     public AreaPopulationChartResponse getAreaPopulation(
         @RequestParam String areaCode,
+        @RequestParam(required = false) String areaLevel,
         @RequestParam(required = false) String date,
         @RequestParam(required = false) String hour
     ){
-        return dashboardBoundaryService.getAreaPopulation(areaCode, date, hour);
+        return dashboardBoundaryService.getAreaPopulation(areaCode, areaLevel, date, hour);
+    }
+
+    @GetMapping("/floating-population")
+    public FloatingPopulationChartResponse getFloatingPopulation(
+        @RequestParam String areaCode,
+        @RequestParam(required = false) String areaLevel,
+        @RequestParam(required = false) String date,
+        @RequestParam(required = false) String hour
+    ){
+        return dashboardBoundaryService.getFloatingPopulation(areaCode, areaLevel, date, hour);
     }
 }

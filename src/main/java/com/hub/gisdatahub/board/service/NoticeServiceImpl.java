@@ -18,4 +18,8 @@ public class NoticeServiceImpl implements NoticeService {
     public List<BoardPostDto> getNoticeList() {
         return noticeSqlMapper.findByNoticeList();
     }
+
+    public BoardPostDto getNoticeDetailData(Long postId) {
+        return noticeSqlMapper.findByNoticeDetailData(postId);
+    }
 }

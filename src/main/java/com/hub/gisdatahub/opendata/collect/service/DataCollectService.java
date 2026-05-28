@@ -2,6 +2,7 @@ package com.hub.gisdatahub.opendata.collect.service;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -14,30 +15,38 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hub.gisdatahub.exception.DataCollectException;
 import com.hub.gisdatahub.opendata.collect.client.DataCollectClient;
 import com.hub.gisdatahub.opendata.collect.dto.seoul.SeoulPopulationRow;
+import com.hub.gisdatahub.opendata.collect.dto.seoul.SdotVisitorRow;
 import com.hub.gisdatahub.opendata.collect.mapper.SeoulPopulationMapper;
+import com.hub.gisdatahub.opendata.collect.mapper.SdotVisitorMapper;
 
 @Service
 public class DataCollectService {
     private static final ZoneId SEOUL_ZONE = ZoneId.of("Asia/Seoul");
     private static final DateTimeFormatter BASIC_DATE = DateTimeFormatter.BASIC_ISO_DATE;
+    private static final DateTimeFormatter SDOT_SENSING_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH:mm:ss");
+    private static final DateTimeFormatter SDOT_REGISTERED_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final int RECENT_DATA_LOOKBACK_DAYS = 7;
     private static final String LIVING_POPULATION_DONG = "SPOP_LOCAL_RESD_DONG";
     private static final String LIVING_POPULATION_SIGUNGU = "SPOP_LOCAL_RESD_JACHI";
+    private static final String SDOT_VISITOR_COUNT = "IotVdata018";
 
     private final DataCollectException dataCollectException;
     private final DataCollectClient dataCollectClient;
     private final SeoulPopulationMapper seoulPopulationMapper;
+    private final SdotVisitorMapper sdotVisitorMapper;
     private final ObjectMapper objectMapper;
 
     public DataCollectService(
         DataCollectException dataCollectException,
         DataCollectClient dataCollectClient,
         SeoulPopulationMapper seoulPopulationMapper,
+        SdotVisitorMapper sdotVisitorMapper,
         ObjectMapper objectMapper
     ) {
         this.dataCollectException = dataCollectException;
         this.dataCollectClient = dataCollectClient;
         this.seoulPopulationMapper = seoulPopulationMapper;
+        this.sdotVisitorMapper = sdotVisitorMapper;
         this.objectMapper = objectMapper;
     }
 
@@ -45,6 +54,11 @@ public class DataCollectService {
     // OpenAPI 응답은 즉시 DB에 저장하고, 대시보드 화면은 이 DB 데이터만 조회합니다.
     public int collectDailySeoulSigunguLivingPopulation() {
         return collectSeoulSigunguLivingPopulation(null, "00");
+    }
+
+    // 스케줄러에서 하루 1회 호출하는 서울 S-DoT 유동인구 수집 진입점입니다.
+    public int collectDailySdotVisitorCount() {
+        return collectSdotVisitorCount(1, 1000);
     }
 
     // 수동 테스트 또는 재수집이 필요할 때 특정 기준일/시간으로 서울 자치구 생활인구를 일괄 수집합니다.
@@ -351,6 +365,93 @@ public class DataCollectService {
             }
         }
         return result;
+    }
+
+    public int collectSdotVisitorCount(int start, int end) {
+        validateRange(start, end);
+        String responseBody = dataCollectClient.callSdotVisitorCount(start, end);
+        return saveSdotVisitorCount(responseBody);
+    }
+
+    private int saveSdotVisitorCount(String responseBody) {
+        if (!hasSeoulOpenApiData(responseBody)) {
+            return 0;
+        }
+
+        List<SdotVisitorRow> rows = parseSdotVisitorRows(responseBody);
+        rows.forEach(sdotVisitorMapper::upsert);
+        return rows.size();
+    }
+
+    private List<SdotVisitorRow> parseSdotVisitorRows(String responseBody) {
+        try {
+            JsonNode root = objectMapper.readTree(responseBody);
+            JsonNode rowsNode = root.path(SDOT_VISITOR_COUNT).path("row");
+            List<SdotVisitorRow> rows = new ArrayList<>();
+
+            if (rowsNode.isArray()) {
+                for (JsonNode rowNode : rowsNode) {
+                    toSdotVisitorRow(rowNode).ifPresent(rows::add);
+                }
+                return rows;
+            }
+
+            if (!rowsNode.isMissingNode() && !rowsNode.isNull()) {
+                toSdotVisitorRow(rowsNode).ifPresent(rows::add);
+            }
+
+            return rows;
+        } catch (Exception exception) {
+            throw new IllegalStateException("서울 S-DoT 유동인구 응답 저장 처리에 실패했습니다.", exception);
+        }
+    }
+
+    private java.util.Optional<SdotVisitorRow> toSdotVisitorRow(JsonNode rowNode) {
+        String serialNo = text(rowNode, "SERIAL_NO");
+        String sensingTimeText = text(rowNode, "SENSING_TIME");
+        if (serialNo.isBlank() || sensingTimeText.isBlank()) {
+            return java.util.Optional.empty();
+        }
+
+        LocalDateTime sensingTime = LocalDateTime.parse(sensingTimeText, SDOT_SENSING_TIME);
+        String autonomousDistrict = text(rowNode, "AUTONOMOUS_DISTRICT");
+        String administrativeDistrict = text(rowNode, "ADMINISTRATIVE_DISTRICT");
+        String areaCode = sdotVisitorMapper.findAreaCodeBySourceNames(
+                SDOT_VISITOR_COUNT,
+                autonomousDistrict,
+                administrativeDistrict);
+
+        return java.util.Optional.of(new SdotVisitorRow(
+                areaCode,
+                SDOT_VISITOR_COUNT,
+                sensingTime.toLocalDate(),
+                "%02d".formatted(sensingTime.getHour()),
+                sensingTime,
+                parseSdotRegisteredAt(text(rowNode, "REG_DTTM")),
+                text(rowNode, "MODEL_NM"),
+                serialNo,
+                text(rowNode, "REGION"),
+                autonomousDistrict,
+                administrativeDistrict,
+                integer(rowNode, "VISITOR_COUNT"),
+                rowNode.toString()));
+    }
+
+    private LocalDateTime parseSdotRegisteredAt(String registeredAt) {
+        if (registeredAt == null || registeredAt.isBlank()) {
+            return null;
+        }
+
+        return LocalDateTime.parse(registeredAt, SDOT_REGISTERED_TIME);
+    }
+
+    private int integer(JsonNode node, String fieldName) {
+        String value = text(node, fieldName);
+        if (value == null || value.isBlank()) {
+            return 0;
+        }
+
+        return Integer.parseInt(value);
     }
 
     public String getSdotVisitorCount(int start, int end, String district, String date) {

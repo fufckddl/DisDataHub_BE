@@ -5,60 +5,155 @@
 <mapper namespace="com.hub.gisdatahub.dashboard.mapper.DashboardPopulationMapper">
 
     <select id="findAreaPopulation" resultType="com.hub.gisdatahub.dashboard.dto.AreaPopulationDto">
+        WITH selected_area AS (
+            SELECT
+                area_code,
+                sido_code,
+                sigungu_code,
+                eupmyeondong_code,
+                name,
+                full_name,
+                COALESCE(#{areaLevel}, level) AS selected_level
+            FROM public.sd_area_code
+            WHERE area_code = #{areaCode}
+            LIMIT 1
+        ),
+        scope_candidates AS (
+            SELECT c.area_code, 1 AS priority
+            FROM public.sd_area_code c
+            CROSS JOIN selected_area s
+            WHERE s.selected_level = 'SIDO'
+              AND c.level = 'SIGUNGU'
+              AND c.sido_code = s.sido_code
+
+            UNION ALL
+
+            SELECT s.area_code, 1 AS priority
+            FROM selected_area s
+            WHERE s.selected_level = 'SIGUNGU'
+
+            UNION ALL
+
+            SELECT s.area_code, 1 AS priority
+            FROM selected_area s
+            WHERE s.selected_level = 'EUPMYEONDONG'
+
+            UNION ALL
+
+            SELECT s.area_code, 1 AS priority
+            FROM selected_area s
+            WHERE s.selected_level = 'JIPGYEGU'
+
+            UNION ALL
+
+            SELECT c.area_code, 2 AS priority
+            FROM public.sd_area_code c
+            CROSS JOIN selected_area s
+            WHERE s.selected_level = 'JIPGYEGU'
+              AND c.level = 'EUPMYEONDONG'
+              AND c.sido_code = s.sido_code
+              AND c.sigungu_code = s.sigungu_code
+              AND c.eupmyeondong_code = s.eupmyeondong_code
+
+            UNION ALL
+
+            SELECT c.area_code, 2 AS priority
+            FROM public.sd_area_code c
+            CROSS JOIN selected_area s
+            WHERE s.selected_level = 'EUPMYEONDONG'
+              AND c.level = 'SIGUNGU'
+              AND c.sido_code = s.sido_code
+              AND c.sigungu_code = s.sigungu_code
+
+            UNION ALL
+
+            SELECT c.area_code, 3 AS priority
+            FROM public.sd_area_code c
+            CROSS JOIN selected_area s
+            WHERE s.selected_level = 'JIPGYEGU'
+              AND c.level = 'SIGUNGU'
+              AND c.sido_code = s.sido_code
+              AND c.sigungu_code = s.sigungu_code
+        ),
+        available_priority AS (
+            SELECT MIN(sc.priority) AS priority
+            FROM scope_candidates sc
+            JOIN public.sd_area_population p
+                ON p.area_code = sc.area_code
+            WHERE 1 = 1
+            <if test="baseDate != null">
+                AND p.base_date = #{baseDate}
+            </if>
+            <if test="hour != null and hour != ''">
+                AND p.hour = #{hour}
+            </if>
+        ),
+        filtered_population AS (
+            SELECT p.*
+            FROM public.sd_area_population p
+            JOIN scope_candidates sc
+                ON sc.area_code = p.area_code
+            JOIN available_priority ap
+                ON ap.priority = sc.priority
+            WHERE 1 = 1
+            <if test="baseDate != null">
+                AND p.base_date = #{baseDate}
+            </if>
+            <if test="hour != null and hour != ''">
+                AND p.hour = #{hour}
+            </if>
+        ),
+        latest_population AS (
+            SELECT DISTINCT ON (p.area_code)
+                p.*
+            FROM filtered_population p
+            ORDER BY p.area_code, p.base_date DESC, p.hour DESC, p.population_id DESC
+        )
         SELECT
-            p.population_id,
-            p.area_code,
-            c.name AS area_name,
-            c.full_name,
-            p.source_code,
-            p.base_date,
-            p.hour,
-            p.total_population,
-            p.male_population,
-            p.female_population,
-            p.male_0_9,
-            p.male_10_14,
-            p.male_15_19,
-            p.male_20_24,
-            p.male_25_29,
-            p.male_30_34,
-            p.male_35_39,
-            p.male_40_44,
-            p.male_45_49,
-            p.male_50_54,
-            p.male_55_59,
-            p.male_60_64,
-            p.male_65_69,
-            p.male_70_74,
-            p.female_0_9,
-            p.female_10_14,
-            p.female_15_19,
-            p.female_20_24,
-            p.female_25_29,
-            p.female_30_34,
-            p.female_35_39,
-            p.female_40_44,
-            p.female_45_49,
-            p.female_50_54,
-            p.female_55_59,
-            p.female_60_64,
-            p.female_65_69,
-            p.female_70_74,
-            p.metadata::text AS metadata,
-            p.created_at,
-            p.updated_at
-        FROM public.sd_area_population p
-        JOIN public.sd_area_code c
-            ON c.area_code = p.area_code
-        WHERE p.area_code = #{areaCode}
-        <if test="baseDate != null">
-            AND p.base_date = #{baseDate}
-        </if>
-        <if test="hour != null and hour != ''">
-            AND p.hour = #{hour}
-        </if>
-        ORDER BY p.base_date DESC, p.hour DESC
-        LIMIT 1
+            MIN(p.population_id) AS population_id,
+            s.area_code,
+            s.name AS area_name,
+            s.full_name,
+            STRING_AGG(DISTINCT p.source_code, ',') AS source_code,
+            MAX(p.base_date) AS base_date,
+            MAX(p.hour) AS hour,
+            SUM(p.total_population) AS total_population,
+            SUM(p.male_population) AS male_population,
+            SUM(p.female_population) AS female_population,
+            SUM(p.male_0_9) AS male0To9,
+            SUM(p.male_10_14) AS male10To14,
+            SUM(p.male_15_19) AS male15To19,
+            SUM(p.male_20_24) AS male20To24,
+            SUM(p.male_25_29) AS male25To29,
+            SUM(p.male_30_34) AS male30To34,
+            SUM(p.male_35_39) AS male35To39,
+            SUM(p.male_40_44) AS male40To44,
+            SUM(p.male_45_49) AS male45To49,
+            SUM(p.male_50_54) AS male50To54,
+            SUM(p.male_55_59) AS male55To59,
+            SUM(p.male_60_64) AS male60To64,
+            SUM(p.male_65_69) AS male65To69,
+            SUM(p.male_70_74) AS male70To74,
+            SUM(p.female_0_9) AS female0To9,
+            SUM(p.female_10_14) AS female10To14,
+            SUM(p.female_15_19) AS female15To19,
+            SUM(p.female_20_24) AS female20To24,
+            SUM(p.female_25_29) AS female25To29,
+            SUM(p.female_30_34) AS female30To34,
+            SUM(p.female_35_39) AS female35To39,
+            SUM(p.female_40_44) AS female40To44,
+            SUM(p.female_45_49) AS female45To49,
+            SUM(p.female_50_54) AS female50To54,
+            SUM(p.female_55_59) AS female55To59,
+            SUM(p.female_60_64) AS female60To64,
+            SUM(p.female_65_69) AS female65To69,
+            SUM(p.female_70_74) AS female70To74,
+            MAX(CAST(p.metadata AS varchar)) AS metadata,
+            MAX(p.created_at) AS created_at,
+            MAX(p.updated_at) AS updated_at
+        FROM latest_population p
+        CROSS JOIN selected_area s
+        GROUP BY s.area_code, s.name, s.full_name
     </select>
 
 </mapper>

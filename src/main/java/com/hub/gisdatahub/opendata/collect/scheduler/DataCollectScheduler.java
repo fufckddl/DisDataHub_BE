@@ -18,4 +18,9 @@ public class DataCollectScheduler {
     public void collectDailySeoulSigunguLivingPopulation() {
         dataCollectService.collectDailySeoulSigunguLivingPopulation();
     }
+
+    @Scheduled(cron = "${seoul.open-api.sdot-visitor-collect-cron:0 20 3 * * *}", zone = "Asia/Seoul")
+    public void collectDailySdotVisitorCount() {
+        dataCollectService.collectDailySdotVisitorCount();
+    }
 }
