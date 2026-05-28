@@ -168,8 +168,8 @@ public class DashboardBoundaryService {
                             'canDrillDown', c.level != 'JIPGYEGU'
             """;
     private static final List<String> POPULATION_AGE_LABELS = List.of(
-            "0-9", "10-14", "15-19", "20-24", "25-29", "30-34", "35-39",
-            "40-44", "45-49", "50-54", "55-59", "60-64", "65-69", "70-74");
+            "0-9", "10-19", "20-29", "30-39", "40-49", "50-59",
+            "60-69", "70-79", "80-89", "90-99", "100+");
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
     private final DashboardPopulationMapper populationMapper;
@@ -236,7 +236,7 @@ public class DashboardBoundaryService {
         if (population == null) {
             throw new ResponseStatusException(
                         HttpStatus.NOT_FOUND,
-                        "조회 가능한 생활인구 데이터가 없습니다.");
+                        "조회 가능한 주민등록 인구 데이터가 없습니다.");
         }
 
         return AreaPopulationChartResponse.builder()
@@ -755,37 +755,31 @@ public class DashboardBoundaryService {
     private List<BigDecimal> maleAgeData(AreaPopulationDto population) {
         return List.of(
                 zeroIfNull(population.getMale0To9()),
-                zeroIfNull(population.getMale10To14()),
-                zeroIfNull(population.getMale15To19()),
-                zeroIfNull(population.getMale20To24()),
-                zeroIfNull(population.getMale25To29()),
-                zeroIfNull(population.getMale30To34()),
-                zeroIfNull(population.getMale35To39()),
-                zeroIfNull(population.getMale40To44()),
-                zeroIfNull(population.getMale45To49()),
-                zeroIfNull(population.getMale50To54()),
-                zeroIfNull(population.getMale55To59()),
-                zeroIfNull(population.getMale60To64()),
-                zeroIfNull(population.getMale65To69()),
-                zeroIfNull(population.getMale70To74()));
+                zeroIfNull(population.getMale10To19()),
+                zeroIfNull(population.getMale20To29()),
+                zeroIfNull(population.getMale30To39()),
+                zeroIfNull(population.getMale40To49()),
+                zeroIfNull(population.getMale50To59()),
+                zeroIfNull(population.getMale60To69()),
+                zeroIfNull(population.getMale70To79()),
+                zeroIfNull(population.getMale80To89()),
+                zeroIfNull(population.getMale90To99()),
+                zeroIfNull(population.getMale100Over()));
     }
 
     private List<BigDecimal> femaleAgeData(AreaPopulationDto population) {
         return List.of(
                 zeroIfNull(population.getFemale0To9()),
-                zeroIfNull(population.getFemale10To14()),
-                zeroIfNull(population.getFemale15To19()),
-                zeroIfNull(population.getFemale20To24()),
-                zeroIfNull(population.getFemale25To29()),
-                zeroIfNull(population.getFemale30To34()),
-                zeroIfNull(population.getFemale35To39()),
-                zeroIfNull(population.getFemale40To44()),
-                zeroIfNull(population.getFemale45To49()),
-                zeroIfNull(population.getFemale50To54()),
-                zeroIfNull(population.getFemale55To59()),
-                zeroIfNull(population.getFemale60To64()),
-                zeroIfNull(population.getFemale65To69()),
-                zeroIfNull(population.getFemale70To74()));
+                zeroIfNull(population.getFemale10To19()),
+                zeroIfNull(population.getFemale20To29()),
+                zeroIfNull(population.getFemale30To39()),
+                zeroIfNull(population.getFemale40To49()),
+                zeroIfNull(population.getFemale50To59()),
+                zeroIfNull(population.getFemale60To69()),
+                zeroIfNull(population.getFemale70To79()),
+                zeroIfNull(population.getFemale80To89()),
+                zeroIfNull(population.getFemale90To99()),
+                zeroIfNull(population.getFemale100Over()));
     }
 
     private BigDecimal zeroIfNull(BigDecimal value) {

@@ -11,15 +11,21 @@ import org.springframework.core.io.ClassPathResource;
 class CollectAreaCodeMappingXmlTest {
 
     @Test
-    void seoulPopulationMapperResolvesApiCodesAgainstAreaCodeTable() throws IOException {
-        String mapperXml = new ClassPathResource("mapper/SeoulPopulationMapper.xml")
+    void moisPopulationMapperResolvesApiCodesAgainstAreaCodeTable() throws IOException {
+        String mapperXml = new ClassPathResource("mapper/MoisResidentPopulationMapper.xml")
                 .getContentAsString(StandardCharsets.UTF_8);
 
         assertThat(mapperXml)
-                .contains("findAreaCodeByLivingPopulationApiCode")
-                .contains("AND c.sigungu_code = #{apiAreaCode}")
-                .contains("SUBSTRING(#{apiAreaCode}, 6, 5) = '00000'")
-                .contains("AND c.eupmyeondong_code = SUBSTRING(#{apiAreaCode}, 1, 8)");
+                .contains("findAreaCodeByAdmmCd")
+                .contains("findAreaCodeByAdmmCodeAndSourceNames")
+                .contains("findSigunguAdmmCodes")
+                .contains("findEupmyeondongAdmmCodes")
+                .contains("AND c.sido_code = #{admmCd}")
+                .contains("AND c.sigungu_code = #{admmCd}")
+                .contains("SUBSTRING(#{admmCd}, 6, 5) = '00000'")
+                .contains("AND c.eupmyeondong_code = SUBSTRING(#{admmCd}, 1, 8)")
+                .contains("c.sigungu_code = SUBSTRING(#{admmCd}, 1, 5)")
+                .contains("REGEXP_REPLACE(REPLACE(#{dongNm}, '제', ''), '[0-9]+동$', '동')");
     }
 
     @Test

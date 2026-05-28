@@ -13,7 +13,7 @@ import lombok.NoArgsConstructor;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-// sd_area_population 테이블에서 조회한 원본 인구 데이터를 담는 DTO입니다.
+// sd_resident_population 테이블에서 조회한 원본 주민등록 인구 데이터를 담는 DTO입니다.
 public class AreaPopulationDto {
 
     private Long populationId;
@@ -29,36 +29,30 @@ public class AreaPopulationDto {
     private BigDecimal malePopulation;
     private BigDecimal femalePopulation;
 
-    // 서울 생활인구 API는 연령/성별 값을 소수점 포함 추정치로 제공하므로 BigDecimal로 관리합니다.
+    // 행안부 주민등록 인구 API는 10세 단위 성/연령 값을 제공합니다.
     private BigDecimal male0To9;
-    private BigDecimal male10To14;
-    private BigDecimal male15To19;
-    private BigDecimal male20To24;
-    private BigDecimal male25To29;
-    private BigDecimal male30To34;
-    private BigDecimal male35To39;
-    private BigDecimal male40To44;
-    private BigDecimal male45To49;
-    private BigDecimal male50To54;
-    private BigDecimal male55To59;
-    private BigDecimal male60To64;
-    private BigDecimal male65To69;
-    private BigDecimal male70To74;
+    private BigDecimal male10To19;
+    private BigDecimal male20To29;
+    private BigDecimal male30To39;
+    private BigDecimal male40To49;
+    private BigDecimal male50To59;
+    private BigDecimal male60To69;
+    private BigDecimal male70To79;
+    private BigDecimal male80To89;
+    private BigDecimal male90To99;
+    private BigDecimal male100Over;
 
     private BigDecimal female0To9;
-    private BigDecimal female10To14;
-    private BigDecimal female15To19;
-    private BigDecimal female20To24;
-    private BigDecimal female25To29;
-    private BigDecimal female30To34;
-    private BigDecimal female35To39;
-    private BigDecimal female40To44;
-    private BigDecimal female45To49;
-    private BigDecimal female50To54;
-    private BigDecimal female55To59;
-    private BigDecimal female60To64;
-    private BigDecimal female65To69;
-    private BigDecimal female70To74;
+    private BigDecimal female10To19;
+    private BigDecimal female20To29;
+    private BigDecimal female30To39;
+    private BigDecimal female40To49;
+    private BigDecimal female50To59;
+    private BigDecimal female60To69;
+    private BigDecimal female70To79;
+    private BigDecimal female80To89;
+    private BigDecimal female90To99;
+    private BigDecimal female100Over;
 
     private String metadata;
     private LocalDateTime createdAt;
