@@ -47,6 +47,97 @@ class DashboardBoundaryServiceTest {
         service = new DashboardBoundaryService(jdbcTemplate, populationMapper);
     }
 
+
+    @Test
+    void getAreaNavigationReturnsParentAndChildContractForSigunguBackButton() throws SQLException {
+        whenAreaMetaQueriesReturn(
+                Map.of(
+                        "area_code", "4155000000",
+                        "sido_code", "41",
+                        "sigungu_code", "41550",
+                        "eupmyeondong_code", "41550000",
+                        "name", "안성시",
+                        "full_name", "경기도 안성시",
+                        "level", "SIGUNGU"),
+                Map.of(
+                        "area_code", "4100000000",
+                        "sido_code", "41",
+                        "sigungu_code", "41000",
+                        "eupmyeondong_code", "41000000",
+                        "name", "경기도",
+                        "full_name", "경기도",
+                        "level", "SIDO"));
+
+        AreaNavigationResponse response = service.getAreaNavigation(" 41550 ");
+
+        assertThat(response.getAreaCode()).isEqualTo("4155000000");
+        assertThat(response.getAreaName()).isEqualTo("안성시");
+        assertThat(response.getAreaLevel()).isEqualTo("SIGUNGU");
+        assertThat(response.getParentAreaCode()).isEqualTo("4100000000");
+        assertThat(response.getParentAreaName()).isEqualTo("경기도");
+        assertThat(response.getParentLevel()).isEqualTo("SIDO");
+        assertThat(response.getChildLevel()).isEqualTo("EUPMYEONDONG");
+        assertThat(response.isCanDrillDown()).isTrue();
+    }
+
+    @Test
+    void getAreaNavigationDisablesDrillDownAtJipgyeguAndReturnsEupmyeondongParent() throws SQLException {
+        whenAreaMetaQueriesReturn(
+                Map.of(
+                        "area_code", "4155031021001",
+                        "sido_code", "41",
+                        "sigungu_code", "41550",
+                        "eupmyeondong_code", "41550310",
+                        "name", "집계구",
+                        "full_name", "경기도 안성시 공도읍 집계구",
+                        "level", "JIPGYEGU"),
+                Map.of(
+                        "area_code", "4155031000",
+                        "sido_code", "41",
+                        "sigungu_code", "41550",
+                        "eupmyeondong_code", "41550310",
+                        "name", "공도읍",
+                        "full_name", "경기도 안성시 공도읍",
+                        "level", "EUPMYEONDONG"));
+
+        AreaNavigationResponse response = service.getAreaNavigation("4155031021001");
+
+        assertThat(response.getAreaCode()).isEqualTo("4155031021001");
+        assertThat(response.getAreaLevel()).isEqualTo("JIPGYEGU");
+        assertThat(response.getParentAreaCode()).isEqualTo("4155031000");
+        assertThat(response.getParentAreaName()).isEqualTo("공도읍");
+        assertThat(response.getParentLevel()).isEqualTo("EUPMYEONDONG");
+        assertThat(response.getChildLevel()).isNull();
+        assertThat(response.isCanDrillDown()).isFalse();
+    }
+
+    @Test
+    void getAreaBoundariesIncludesNavigationPropertiesForDrillDownAndBackButton() {
+        when(jdbcTemplate.queryForObject(anyString(), any(MapSqlParameterSource.class), eq(String.class)))
+                .thenReturn("{\"type\":\"FeatureCollection\",\"features\":[]}");
+
+        String response = service.getAreaBoundaries(
+                "SIGUNGU",
+                "41",
+                "4100000000",
+                "126,36,128,38");
+
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<MapSqlParameterSource> paramsCaptor = ArgumentCaptor.forClass(MapSqlParameterSource.class);
+        verify(jdbcTemplate).queryForObject(sqlCaptor.capture(), paramsCaptor.capture(), eq(String.class));
+
+        assertThat(response).contains("FeatureCollection");
+        assertThat(sqlCaptor.getValue())
+                .contains("'parentAreaCode'")
+                .contains("'parentAreaName'")
+                .contains("'parentLevel'")
+                .contains("'childLevel'")
+                .contains("'canDrillDown'")
+                .contains("p.level = 'SIDO'");
+        assertThat(paramsCaptor.getValue().getValue("sidoCode")).isEqualTo("41");
+        assertThat(paramsCaptor.getValue().getValue("parentAreaCode")).isEqualTo("4100000000");
+    }
+
     @Test
     void getAreaNavigationReturnsParentAndChildContractForSigunguBackButton() throws SQLException {
         whenAreaMetaQueriesReturn(
