@@ -1,20 +1,30 @@
 package com.hub.gisdatahub.dashboard.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.Map;
 import java.time.LocalDate;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.jdbc.core.RowMapper;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
+import com.hub.gisdatahub.dashboard.dto.AreaNavigationResponse;
 import com.hub.gisdatahub.dashboard.dto.AreaPopulationChartResponse;
 import com.hub.gisdatahub.dashboard.dto.AreaPopulationDto;
 import com.hub.gisdatahub.dashboard.mapper.DashboardPopulationMapper;
@@ -33,6 +43,66 @@ class DashboardBoundaryServiceTest {
     @BeforeEach
     void setUp() {
         service = new DashboardBoundaryService(jdbcTemplate, populationMapper);
+    }
+
+
+    @Test
+    void getAreaNavigationReturnsParentAndChildContractForSigunguBackButton() throws SQLException {
+        whenAreaMetaQueriesReturn(
+                Map.of(
+                        "area_code", "4155000000",
+                        "sido_code", "41",
+                        "sigungu_code", "41550",
+                        "eupmyeondong_code", "41550000",
+                        "name", "안성시",
+                        "full_name", "경기도 안성시",
+                        "level", "SIGUNGU"),
+                Map.of(
+                        "area_code", "4100000000",
+                        "sido_code", "41",
+                        "sigungu_code", "41000",
+                        "eupmyeondong_code", "41000000",
+                        "name", "경기도",
+                        "full_name", "경기도",
+                        "level", "SIDO"));
+
+        AreaNavigationResponse response = service.getAreaNavigation(" 41550 ");
+
+        assertThat(response.getAreaCode()).isEqualTo("4155000000");
+        assertThat(response.getAreaName()).isEqualTo("안성시");
+        assertThat(response.getAreaLevel()).isEqualTo("SIGUNGU");
+        assertThat(response.getParentAreaCode()).isEqualTo("4100000000");
+        assertThat(response.getParentAreaName()).isEqualTo("경기도");
+        assertThat(response.getParentLevel()).isEqualTo("SIDO");
+        assertThat(response.getChildLevel()).isEqualTo("EUPMYEONDONG");
+        assertThat(response.isCanDrillDown()).isTrue();
+    }
+
+    @Test
+    void getAreaBoundariesIncludesNavigationPropertiesForDrillDownAndBackButton() {
+        when(jdbcTemplate.queryForObject(anyString(), any(MapSqlParameterSource.class), eq(String.class)))
+                .thenReturn("{\"type\":\"FeatureCollection\",\"features\":[]}");
+
+        String response = service.getAreaBoundaries(
+                "SIGUNGU",
+                "41",
+                "4100000000",
+                "126,36,128,38");
+
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<MapSqlParameterSource> paramsCaptor = ArgumentCaptor.forClass(MapSqlParameterSource.class);
+        verify(jdbcTemplate).queryForObject(sqlCaptor.capture(), paramsCaptor.capture(), eq(String.class));
+
+        assertThat(response).contains("FeatureCollection");
+        assertThat(sqlCaptor.getValue())
+                .contains("'parentAreaCode'")
+                .contains("'parentAreaName'")
+                .contains("'parentLevel'")
+                .contains("'childLevel'")
+                .contains("'canDrillDown'")
+                .contains("p.level = 'SIDO'");
+        assertThat(paramsCaptor.getValue().getValue("sidoCode")).isEqualTo("41");
+        assertThat(paramsCaptor.getValue().getValue("parentAreaCode")).isEqualTo("4100000000");
     }
 
     @Test
@@ -149,5 +219,36 @@ class DashboardBoundaryServiceTest {
         verify(populationMapper).findAreaPopulation("1101053010001", "JIPGYEGU", null, null);
         assertThat(response.getAreaCode()).isEqualTo("1101053010001");
         assertThat(response.getFullName()).isEqualTo("서울특별시 종로구 사직동 집계구");
+    }
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private void whenAreaMetaQueriesReturn(
+            Map<String, String> areaRow,
+            Map<String, String> parentRow) throws SQLException {
+        when(jdbcTemplate.query(anyString(), any(MapSqlParameterSource.class), any(RowMapper.class)))
+                .thenAnswer(invocation -> {
+                    String sql = invocation.getArgument(0);
+                    RowMapper rowMapper = invocation.getArgument(2);
+                    if (sql.contains("matched_area")) {
+                        return List.of(rowMapper.mapRow(resultSet(areaRow), 0));
+                    }
+                    if (sql.contains("FROM public.sd_area_code p")) {
+                        return parentRow == null
+                                ? List.of()
+                                : List.of(rowMapper.mapRow(resultSet(parentRow), 0));
+                    }
+                    return List.of();
+                });
+    }
+
+    private ResultSet resultSet(Map<String, String> row) throws SQLException {
+        ResultSet resultSet = org.mockito.Mockito.mock(ResultSet.class);
+        when(resultSet.getString("area_code")).thenReturn(row.get("area_code"));
+        when(resultSet.getString("sido_code")).thenReturn(row.get("sido_code"));
+        when(resultSet.getString("sigungu_code")).thenReturn(row.get("sigungu_code"));
+        when(resultSet.getString("eupmyeondong_code")).thenReturn(row.get("eupmyeondong_code"));
+        when(resultSet.getString("name")).thenReturn(row.get("name"));
+        when(resultSet.getString("full_name")).thenReturn(row.get("full_name"));
+        when(resultSet.getString("level")).thenReturn(row.get("level"));
+        return resultSet;
     }
 }

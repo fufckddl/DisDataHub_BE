@@ -84,6 +84,31 @@ public class DashboardBoundaryService {
                                 ORDER BY p.area_code
                                 LIMIT 1
                             ),
+                            'parentAreaName', (
+                                SELECT p.name
+                                FROM public.sd_area_code p
+                                WHERE p.is_active = TRUE
+                                  AND (
+                                      (c.level = 'SIGUNGU'
+                                       AND p.level = 'SIDO'
+                                       AND p.sido_code = c.sido_code)
+                                      OR (
+                                          c.level = 'EUPMYEONDONG'
+                                          AND p.level = 'SIGUNGU'
+                                          AND p.sido_code = c.sido_code
+                                          AND p.sigungu_code = c.sigungu_code
+                                      )
+                                      OR (
+                                          c.level = 'JIPGYEGU'
+                                          AND p.level = 'EUPMYEONDONG'
+                                          AND p.sido_code = c.sido_code
+                                          AND p.sigungu_code = c.sigungu_code
+                                          AND p.eupmyeondong_code = c.eupmyeondong_code
+                                      )
+                                  )
+                                ORDER BY p.area_code
+                                LIMIT 1
+                            ),
                             'parentFullName', (
                                 SELECT p.full_name
                                 FROM public.sd_area_code p
