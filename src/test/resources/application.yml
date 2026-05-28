@@ -1,10 +1,16 @@
 # 단위 테스트: 로컬 .env 없이 컨텍스트 기동 (인메모리 H2)
 spring:
   datasource:
-    url: jdbc:h2:mem:testgis;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    url: jdbc:h2:mem:testgis;MODE=PostgreSQL;NON_KEYWORDS=HOUR;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
     username: sa
     password: ""
     driver-class-name: org.h2.Driver
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.hub.gisdatahub.user.domain, com.hub.gisdatahub.user.dto
+  configuration:
+    map-underscore-to-camel-case: true
 
 jwt:
   secret: test-jwt-secret-key-for-unit-tests-32b!
@@ -22,10 +28,3 @@ aws:
     bucket: test-bucket
     access-key-id: test-access-key
     secret-access-key: test-secret-key
-  region: ${AWS_REGION}
-  s3:
-    bucket: ${AWS_S3_BUCKET}
-    access-key-id: ${AWS_ACCESS_KEY_ID}
-    secret-access-key: ${AWS_SECRET_ACCESS_KEY}    
-
-

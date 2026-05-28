@@ -26,6 +26,9 @@ public interface DatasetMapper {
     // 4. sd_gis_dataset_file 테이블에 물리 파일 정보 초기 INSERT
     void insertDatasetFile(DatasetUploadDto dto);
 
+    // 통계 카운트 테이블
+    void insertDatasetStat(Long datasetId);
+
     void updateFileInfo(DatasetUploadDto dto);
 
     // 500개의 데이터를 한 방에 넣는 Bulk Insert 메서드

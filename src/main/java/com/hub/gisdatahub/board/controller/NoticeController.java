@@ -6,6 +6,7 @@ import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -26,6 +27,17 @@ public class NoticeController {
         List<BoardPostDto> noticeList = noticeService.getNoticeList();
 
         response.put("noticeList", noticeList);
+        response.put("result", "success");
+
+        return response;
+    }
+
+    public Map<String, Object> findNoticeDetail(@PathVariable Long postId) {
+        Map<String, Object> response = new HashMap<>();
+
+        BoardPostDto noticeDetail = noticeService.getNoticeDetailData(postId);
+
+        response.put("noticeDetail", noticeDetail);
         response.put("result", "success");
 
         return response;

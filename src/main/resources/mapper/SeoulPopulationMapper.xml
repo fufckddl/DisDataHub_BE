@@ -23,6 +23,69 @@
         )
     </select>
 
+    <select id="findAreaCodeByLivingPopulationApiCode" parameterType="string" resultType="string">
+        SELECT area_code
+        FROM (
+            SELECT
+                c.area_code,
+                CASE
+                    WHEN c.area_code = #{apiAreaCode} THEN 0
+                    WHEN LENGTH(#{apiAreaCode}) = 5
+                         AND c.level = 'SIGUNGU'
+                         AND c.sigungu_code = #{apiAreaCode} THEN 1
+                    WHEN LENGTH(#{apiAreaCode}) = 10
+                         AND SUBSTRING(#{apiAreaCode}, 6, 5) = '00000'
+                         AND c.level = 'SIGUNGU'
+                         AND c.sigungu_code = SUBSTRING(#{apiAreaCode}, 1, 5) THEN 2
+                    WHEN LENGTH(#{apiAreaCode}) = 8
+                         AND c.level = 'EUPMYEONDONG'
+                         AND c.eupmyeondong_code = #{apiAreaCode} THEN 3
+                    WHEN LENGTH(#{apiAreaCode}) = 10
+                         AND SUBSTRING(#{apiAreaCode}, 9, 2) = '00'
+                         AND c.level = 'EUPMYEONDONG'
+                         AND c.eupmyeondong_code = SUBSTRING(#{apiAreaCode}, 1, 8) THEN 4
+                    WHEN LENGTH(#{apiAreaCode}) = 8
+                         AND c.level = 'SIGUNGU'
+                         AND c.sigungu_code = SUBSTRING(#{apiAreaCode}, 1, 5) THEN 5
+                    ELSE 9
+                END AS match_priority
+            FROM public.sd_area_code c
+            WHERE c.is_active = TRUE
+              AND (
+                  c.area_code = #{apiAreaCode}
+                  OR (
+                      LENGTH(#{apiAreaCode}) = 5
+                      AND c.level = 'SIGUNGU'
+                      AND c.sigungu_code = #{apiAreaCode}
+                  )
+                  OR (
+                      LENGTH(#{apiAreaCode}) = 10
+                      AND SUBSTRING(#{apiAreaCode}, 6, 5) = '00000'
+                      AND c.level = 'SIGUNGU'
+                      AND c.sigungu_code = SUBSTRING(#{apiAreaCode}, 1, 5)
+                  )
+                  OR (
+                      LENGTH(#{apiAreaCode}) = 8
+                      AND c.level = 'EUPMYEONDONG'
+                      AND c.eupmyeondong_code = #{apiAreaCode}
+                  )
+                  OR (
+                      LENGTH(#{apiAreaCode}) = 10
+                      AND SUBSTRING(#{apiAreaCode}, 9, 2) = '00'
+                      AND c.level = 'EUPMYEONDONG'
+                      AND c.eupmyeondong_code = SUBSTRING(#{apiAreaCode}, 1, 8)
+                  )
+                  OR (
+                      LENGTH(#{apiAreaCode}) = 8
+                      AND c.level = 'SIGUNGU'
+                      AND c.sigungu_code = SUBSTRING(#{apiAreaCode}, 1, 5)
+                  )
+              )
+        ) candidates
+        ORDER BY match_priority, area_code
+        LIMIT 1
+    </select>
+
     <insert id="upsert" parameterType="com.hub.gisdatahub.opendata.collect.dto.seoul.SeoulPopulationRow">
         INSERT INTO public.sd_area_population (
             area_code,
