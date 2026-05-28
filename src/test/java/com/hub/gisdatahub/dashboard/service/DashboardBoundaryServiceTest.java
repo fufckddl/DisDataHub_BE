@@ -78,7 +78,6 @@ class DashboardBoundaryServiceTest {
         assertThat(response.isCanDrillDown()).isTrue();
     }
 
-
     @Test
     void getAreaNavigationDisablesDrillDownAtJipgyeguAndReturnsEupmyeondongParent() throws SQLException {
         whenAreaMetaQueriesReturn(
@@ -252,6 +251,7 @@ class DashboardBoundaryServiceTest {
         assertThat(response.getAreaCode()).isEqualTo("1101053010001");
         assertThat(response.getFullName()).isEqualTo("서울특별시 종로구 사직동 집계구");
     }
+
     @SuppressWarnings({ "rawtypes", "unchecked" })
     private void whenAreaMetaQueriesReturn(
             Map<String, String> areaRow,
