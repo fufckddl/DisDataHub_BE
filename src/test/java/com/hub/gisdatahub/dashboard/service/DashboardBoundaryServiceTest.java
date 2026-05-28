@@ -78,6 +78,38 @@ class DashboardBoundaryServiceTest {
         assertThat(response.isCanDrillDown()).isTrue();
     }
 
+
+    @Test
+    void getAreaNavigationDisablesDrillDownAtJipgyeguAndReturnsEupmyeondongParent() throws SQLException {
+        whenAreaMetaQueriesReturn(
+                Map.of(
+                        "area_code", "4155031021001",
+                        "sido_code", "41",
+                        "sigungu_code", "41550",
+                        "eupmyeondong_code", "41550310",
+                        "name", "집계구",
+                        "full_name", "경기도 안성시 공도읍 집계구",
+                        "level", "JIPGYEGU"),
+                Map.of(
+                        "area_code", "4155031000",
+                        "sido_code", "41",
+                        "sigungu_code", "41550",
+                        "eupmyeondong_code", "41550310",
+                        "name", "공도읍",
+                        "full_name", "경기도 안성시 공도읍",
+                        "level", "EUPMYEONDONG"));
+
+        AreaNavigationResponse response = service.getAreaNavigation("4155031021001");
+
+        assertThat(response.getAreaCode()).isEqualTo("4155031021001");
+        assertThat(response.getAreaLevel()).isEqualTo("JIPGYEGU");
+        assertThat(response.getParentAreaCode()).isEqualTo("4155031000");
+        assertThat(response.getParentAreaName()).isEqualTo("공도읍");
+        assertThat(response.getParentLevel()).isEqualTo("EUPMYEONDONG");
+        assertThat(response.getChildLevel()).isNull();
+        assertThat(response.isCanDrillDown()).isFalse();
+    }
+
     @Test
     void getAreaBoundariesIncludesNavigationPropertiesForDrillDownAndBackButton() {
         when(jdbcTemplate.queryForObject(anyString(), any(MapSqlParameterSource.class), eq(String.class)))
