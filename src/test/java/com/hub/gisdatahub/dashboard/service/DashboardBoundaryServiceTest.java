@@ -1,20 +1,26 @@
 package com.hub.gisdatahub.dashboard.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
+import com.hub.gisdatahub.dashboard.dto.AreaNavigationResponse;
 import com.hub.gisdatahub.dashboard.dto.AreaPopulationChartResponse;
 import com.hub.gisdatahub.dashboard.dto.AreaPopulationDto;
 import com.hub.gisdatahub.dashboard.mapper.DashboardPopulationMapper;
@@ -33,6 +39,58 @@ class DashboardBoundaryServiceTest {
     @BeforeEach
     void setUp() {
         service = new DashboardBoundaryService(jdbcTemplate, populationMapper);
+    }
+
+
+    @Test
+    void getAreaNavigationReturnsParentAndChildLevelsForSigunguBackButton() {
+        stubAreaNavigationQueries(
+                areaMeta("41550", "41", "41550", "41550000", "안성시", "경기도 안성시", "SIGUNGU"),
+                areaMeta("41", "41", null, null, "경기도", "경기도", "SIDO"));
+
+        AreaNavigationResponse response = service.getAreaNavigation(" 41550 ");
+
+        assertThat(response.getAreaCode()).isEqualTo("41550");
+        assertThat(response.getAreaName()).isEqualTo("안성시");
+        assertThat(response.getAreaLevel()).isEqualTo("SIGUNGU");
+        assertThat(response.getParentAreaCode()).isEqualTo("41");
+        assertThat(response.getParentAreaName()).isEqualTo("경기도");
+        assertThat(response.getParentLevel()).isEqualTo("SIDO");
+        assertThat(response.getChildLevel()).isEqualTo("EUPMYEONDONG");
+        assertThat(response.isCanDrillDown()).isTrue();
+    }
+
+    @Test
+    void getAreaNavigationReturnsPreviousSigunguForEupmyeondongBackButton() {
+        stubAreaNavigationQueries(
+                areaMeta("41550310", "41", "41550", "41550310", "공도읍", "경기도 안성시 공도읍", "EUPMYEONDONG"),
+                areaMeta("41550", "41", "41550", "41550000", "안성시", "경기도 안성시", "SIGUNGU"));
+
+        AreaNavigationResponse response = service.getAreaNavigation("41550310");
+
+        assertThat(response.getAreaCode()).isEqualTo("41550310");
+        assertThat(response.getAreaLevel()).isEqualTo("EUPMYEONDONG");
+        assertThat(response.getParentAreaCode()).isEqualTo("41550");
+        assertThat(response.getParentAreaName()).isEqualTo("안성시");
+        assertThat(response.getParentLevel()).isEqualTo("SIGUNGU");
+        assertThat(response.getChildLevel()).isEqualTo("JIPGYEGU");
+        assertThat(response.isCanDrillDown()).isTrue();
+    }
+
+    @Test
+    void getAreaNavigationDisablesDrillDownAtJipgyeguAndKeepsParentForBackButton() {
+        stubAreaNavigationQueries(
+                areaMeta("4155031020001", "41", "41550", "41550310", "집계구", "경기도 안성시 공도읍 집계구", "JIPGYEGU"),
+                areaMeta("41550310", "41", "41550", "41550310", "공도읍", "경기도 안성시 공도읍", "EUPMYEONDONG"));
+
+        AreaNavigationResponse response = service.getAreaNavigation("4155031020001");
+
+        assertThat(response.getAreaCode()).isEqualTo("4155031020001");
+        assertThat(response.getAreaLevel()).isEqualTo("JIPGYEGU");
+        assertThat(response.getParentAreaCode()).isEqualTo("41550310");
+        assertThat(response.getParentLevel()).isEqualTo("EUPMYEONDONG");
+        assertThat(response.getChildLevel()).isNull();
+        assertThat(response.isCanDrillDown()).isFalse();
     }
 
     @Test
@@ -150,4 +208,40 @@ class DashboardBoundaryServiceTest {
         assertThat(response.getAreaCode()).isEqualTo("1101053010001");
         assertThat(response.getFullName()).isEqualTo("서울특별시 종로구 사직동 집계구");
     }
+    private void stubAreaNavigationQueries(Map<String, Object> areaRow, Map<String, Object> parentRow) {
+        when(jdbcTemplate.query(
+                any(String.class),
+                any(org.springframework.jdbc.core.namedparam.MapSqlParameterSource.class),
+                any(RowMapper.class)))
+                .thenAnswer(invocation -> mapSingleRow(invocation.getArgument(2), areaRow))
+                .thenAnswer(invocation -> mapSingleRow(invocation.getArgument(2), parentRow));
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static List<?> mapSingleRow(RowMapper mapper, Map<String, Object> row) throws Exception {
+        java.sql.ResultSet resultSet = mock(java.sql.ResultSet.class);
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            when(resultSet.getString(entry.getKey())).thenReturn((String) entry.getValue());
+        }
+        return List.of(mapper.mapRow(resultSet, 0));
+    }
+
+    private static Map<String, Object> areaMeta(
+            String areaCode,
+            String sidoCode,
+            String sigunguCode,
+            String eupmyeondongCode,
+            String name,
+            String fullName,
+            String level) {
+        return Map.of(
+                "area_code", areaCode,
+                "sido_code", sidoCode,
+                "sigungu_code", sigunguCode == null ? "" : sigunguCode,
+                "eupmyeondong_code", eupmyeondongCode == null ? "" : eupmyeondongCode,
+                "name", name,
+                "full_name", fullName,
+                "level", level);
+    }
+
 }
