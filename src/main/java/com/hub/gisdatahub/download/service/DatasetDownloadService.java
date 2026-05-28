@@ -15,18 +15,15 @@ import com.hub.gisdatahub.download.dto.DownloadDatasetDetailDto;
 import com.hub.gisdatahub.download.dto.DownloadDatasetFileDto;
 import com.hub.gisdatahub.download.dto.DownloadDatasetListItemDto;
 import com.hub.gisdatahub.download.mapper.DatasetDownloadMapper;
-import com.hub.gisdatahub.user.domain.User;
 import com.hub.gisdatahub.user.mapper.UserMapper;
 
 @Service
 public class DatasetDownloadService {
 
     private final DatasetDownloadMapper datasetDownloadMapper;
-    private final UserMapper userMapper;
 
     public DatasetDownloadService(DatasetDownloadMapper datasetDownloadMapper, UserMapper userMapper) {
         this.datasetDownloadMapper = datasetDownloadMapper;
-        this.userMapper = userMapper;
     }
 
 
@@ -72,22 +69,22 @@ public class DatasetDownloadService {
     }
 
     private void validateDatasetDetailAccess(DownloadDatasetDetailDto dataset, Integer userId) {
+        // 공개 데이터셋일 경우 
         if (Boolean.TRUE.equals(dataset.getIsPublic())) {
-            return;
+            return;  // 그냥 통과
         }
-
+        //  로그인을 하지 않았을경우
         if (userId == null) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "비공개 데이터셋은 로그인 후 접근할 수 있습니다.");
         }
 
-        User user = userMapper.findById(userId);
-        if (user == null) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "사용자 정보를 확인할 수 없습니다.");
-        }
+        // 소속기관 갖고오기
+        String userOrganization = datasetDownloadMapper.findUserOrganization(userId);
+        String datasetOwnerOrganization = datasetDownloadMapper.findDatasetOwnerOrganization(dataset.getDatasetId());
 
-        if (!Objects.equals(normalize(user.getOrganization()), normalize(dataset.getProvider()))) {
+        if (!Objects.equals(normalize(userOrganization), normalize(datasetOwnerOrganization))) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "동일 소속기관 사용자만 접근할 수 있습니다.");
-        }
+        }        
     }
 
     private String normalize(String value) {
@@ -126,5 +123,16 @@ public class DatasetDownloadService {
         Integer recentCount = datasetDownloadMapper.countRecentViewByIp(datasetId, viewIp, fromTime);
         return recentCount != null && recentCount > 0;
         
+    }
+
+    // 업로드자의 소속기관, 사용자 소속기관 비교
+    public boolean hasSameOrganization(Integer userId, Long datasetId){
+        String userOrganization = datasetDownloadMapper.findUserOrganization(userId);
+        String uploderOrganization = datasetDownloadMapper.findDatasetOwnerOrganization(datasetId);
+
+        boolean result = true;
+        if(!userOrganization.equals(uploderOrganization)) result = false;
+
+        return result;
     }
 }

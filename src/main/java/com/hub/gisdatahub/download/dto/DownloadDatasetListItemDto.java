@@ -10,6 +10,7 @@ public class DownloadDatasetListItemDto {
     private String title;
     private String description;
     private String provider;
+    private Boolean isPublic;
     private LocalDateTime createdAt;
     private String fileExtension;
     private Integer viewCount;
