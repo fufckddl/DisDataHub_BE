@@ -79,7 +79,6 @@ class DashboardBoundaryServiceTest {
         assertThat(response.isCanDrillDown()).isTrue();
     }
 
-
     @Test
     void getAreaNavigationDisablesDrillDownAtJipgyeguAndReturnsEupmyeondongParent() throws SQLException {
         whenAreaMetaQueriesReturn(
@@ -254,14 +253,24 @@ class DashboardBoundaryServiceTest {
         assertThat(response.getFullName()).isEqualTo("서울특별시 종로구 사직동 집계구");
     }
 
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private void stubAreaNavigationQueries(Map<String, Object> areaRow, Map<String, Object> parentRow) {
-        when(jdbcTemplate.query(
-                any(String.class),
-                any(org.springframework.jdbc.core.namedparam.MapSqlParameterSource.class),
-                any(RowMapper.class)))
-                .thenAnswer(invocation -> mapSingleRow(invocation.getArgument(2), areaRow))
-                .thenAnswer(invocation -> mapSingleRow(invocation.getArgument(2), parentRow));
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private void whenAreaMetaQueriesReturn(
+            Map<String, String> areaRow,
+            Map<String, String> parentRow) throws SQLException {
+        when(jdbcTemplate.query(anyString(), any(MapSqlParameterSource.class), any(RowMapper.class)))
+                .thenAnswer(invocation -> {
+                    String sql = invocation.getArgument(0);
+                    RowMapper rowMapper = invocation.getArgument(2);
+                    if (sql.contains("matched_area")) {
+                        return List.of(rowMapper.mapRow(resultSet(areaRow), 0));
+                    }
+                    if (sql.contains("FROM public.sd_area_code p")) {
+                        return parentRow == null
+                                ? List.of()
+                                : List.of(rowMapper.mapRow(resultSet(parentRow), 0));
+                    }
+                    return List.of();
+                });
     }
 
     private ResultSet resultSet(Map<String, String> row) throws SQLException {
