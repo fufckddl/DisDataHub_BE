@@ -1,12 +1,10 @@
 package com.hub.gisdatahub.dashboard.controller;
 
 import org.springframework.http.MediaType;
-import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.server.ResponseStatusException;
 
 import com.hub.gisdatahub.dashboard.dto.AreaPopulationChartResponse;
 import com.hub.gisdatahub.dashboard.service.DashboardBoundaryService;
@@ -34,10 +32,6 @@ public class DashboardBoundaryController {
         @RequestParam(required = false) String date,
         @RequestParam(required = false) String hour
     ){
-        // TODO: sd_area_population 조회 Service/Repository 구현 후 실제 Chart.js 응답 DTO를 반환하도록 교체합니다.
-        throw new ResponseStatusException(
-            HttpStatus.NOT_IMPLEMENTED,
-            "sd_area_population 조회 서비스 구현이 필요합니다."
-        );
+        return dashboardBoundaryService.getAreaPopulation(areaCode, date, hour);
     }
 }

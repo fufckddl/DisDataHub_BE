@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.hub.gisdatahub.dataset.mapper.ValidationMapper">
+
+    <insert id="insertMissingValuesErrors">
+        INSERT INTO sd_import_validation_error (upload_id, row_number, column_name, error_type, error_message, raw_value, created_at)
+        SELECT 
+            #{uploadId}, row_number, 'feature_name / raw_wkt', 'MISSING_REQUIRED', '필수값(이름, 공간 데이터)이 누락되었습니다.', 
+            COALESCE(feature_name, 'NULL') || ' / ' || COALESCE(raw_wkt, 'NULL'), NOW()
+        FROM sd_upload_temp_feature
+        WHERE upload_id = #{uploadId} AND validation_status = 'PENDING'
+          AND (feature_name IS NULL OR TRIM(feature_name) = '' OR raw_wkt IS NULL OR TRIM(raw_wkt) = '')
+    </insert>
+
+    <insert id="insertInvalidGeometryErrors">
+        INSERT INTO sd_import_validation_error (upload_id, row_number, column_name, error_type, error_message, raw_value, created_at)
+        SELECT 
+            #{uploadId}, row_number, 'raw_wkt', 'INVALID_GEOMETRY', '공간 데이터(WKT)의 형태가 잘못되었습니다. (선 교차, 면 미폐합 등)', raw_wkt, NOW()
+        FROM sd_upload_temp_feature
+        WHERE upload_id = #{uploadId} AND validation_status = 'PENDING'
+          AND ST_IsValid(geom_4326) = false
+    </insert>
+
+    <insert id="insertOutOfKoreaGeometryErrors">
+        INSERT INTO sd_import_validation_error (upload_id, row_number, column_name, error_type, error_message, raw_value, created_at)
+        SELECT 
+            #{uploadId}, row_number, 'raw_wkt', 'OUT_OF_BOUNDS', '데이터가 한국 영토 범위를 벗어났습니다.', raw_wkt, NOW()
+        FROM sd_upload_temp_feature
+        WHERE upload_id = #{uploadId} AND validation_status = 'PENDING'
+          AND ST_CoveredBy(geom_4326, ST_MakeEnvelope(124, 33, 132, 39, 4326)) = false
+    </insert>
+
+    <update id="invalidateMissingValues" parameterType="long">
+        UPDATE sd_upload_temp_feature
+        SET 
+            validation_status = 'INVALID',
+            error_message = '필수값(이름, 공간 WKT 데이터)이 누락되었습니다.'
+        WHERE upload_id = #{uploadId}
+          AND validation_status = 'PENDING'
+          AND (
+              feature_name IS NULL OR TRIM(feature_name) = ''
+              OR raw_wkt IS NULL OR TRIM(raw_wkt) = '' 
+          )
+    </update>
+
+    <update id="bakeGeometry" parameterType="long">
+        UPDATE sd_upload_temp_feature
+        SET 
+            geom_4326 = ST_SetSRID(ST_GeomFromText(raw_wkt), 4326)
+        WHERE upload_id = #{uploadId}
+          AND validation_status = 'PENDING'
+          AND raw_wkt IS NOT NULL
+    </update>
+
+    <update id="invalidateInvalidGeometry" parameterType="long">
+        UPDATE sd_upload_temp_feature
+        SET 
+            validation_status = 'INVALID',
+            error_message = '공간 데이터(WKT)의 형태가 잘못되었습니다. (선 교차, 면 미폐합 등)'
+        WHERE upload_id = #{uploadId}
+          AND validation_status = 'PENDING'
+          AND ST_IsValid(geom_4326) = false
+    </update>
+
+    <update id="invalidateOutOfKoreaGeometry" parameterType="long">
+        UPDATE sd_upload_temp_feature
+        SET 
+            validation_status = 'INVALID',
+            error_message = '데이터가 한국 영토 범위(경도 124~132, 위도 33~39)를 벗어났습니다.'
+        WHERE upload_id = #{uploadId}
+          AND validation_status = 'PENDING'
+          AND ST_CoveredBy(geom_4326, ST_MakeEnvelope(124, 33, 132, 39, 4326)) = false
+    </update>
+
+    <select id="countInvalidFeatures" parameterType="long" resultType="int">
+        SELECT COUNT(*)
+        FROM sd_upload_temp_feature
+        WHERE upload_id = #{uploadId} 
+          AND validation_status = 'INVALID'
+    </select>
+
+    <update id="markRemainingAsValid" parameterType="long">
+        UPDATE sd_upload_temp_feature
+        SET validation_status = 'VALID'
+        WHERE upload_id = #{uploadId} 
+          AND validation_status = 'PENDING'
+    </update>
+
+    <update id="updateLogValidationSuccess" parameterType="long">
+        UPDATE sd_upload_log
+        SET validation_status = 'SUCCESS',
+            -- 🚀 자바에서 개수를 넘겨받을 필요 없이, 현재 임시 테이블에서 합격(VALID)된 개수를 스스로 세어 채웁니다!
+            success_count = (
+                SELECT COUNT(*) 
+                FROM sd_upload_temp_feature 
+                WHERE upload_id = #{uploadId} AND validation_status = 'VALID'
+            )
+        WHERE upload_id = #{uploadId}
+    </update>
+
+    <update id="updateDatasetStatusToRequest" parameterType="long">
+        UPDATE sd_gis_dataset
+        SET status = 'REQUEST'
+        WHERE dataset_id = #{datasetId}
+    </update>
+
+    <update id="updateLogValidationFailed">
+        UPDATE sd_upload_log
+        SET upload_status = 'FAILED',
+            validation_status = 'FAILED',
+            success_count = total_count - #{errorCount},
+            error_count = #{errorCount},
+            error_message = '데이터 검증에 실패하여 전체 롤백 처리되었습니다. 에러 내역을 확인해주세요.',
+            finished_at = NOW()
+        WHERE upload_id = #{uploadId}
+    </update>
+
+    <update id="clearDatasetFilePath" parameterType="long">
+        UPDATE sd_gis_dataset_file SET stored_filename = '', file_path = '' WHERE dataset_id = #{datasetId}
+    </update>
+
+    <update id="updateDatasetStatusToInvalid" parameterType="long">
+        UPDATE sd_gis_dataset SET status = 'INVALID' WHERE dataset_id = #{datasetId}
+    </update>
+
+    <select id="selectValidationErrors" parameterType="long" resultType="ValidationErrorDto">
+        SELECT 
+            error_id AS errorId,
+            upload_id AS uploadId,
+            row_number AS rowNumber,
+            column_name AS columnName,
+            error_type AS errorType,
+            error_message AS errorMessage,
+            raw_value AS rawValue
+        FROM sd_import_validation_error
+        WHERE upload_id = #{uploadId}
+        ORDER BY row_number ASC
+    </select>
+
+</mapper>

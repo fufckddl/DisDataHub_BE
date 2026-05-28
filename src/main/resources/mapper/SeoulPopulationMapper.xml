@@ -4,6 +4,17 @@
 
 <mapper namespace="com.hub.gisdatahub.opendata.collect.mapper.SeoulPopulationMapper">
 
+    <select id="findSeoulSigunguApiCodes" resultType="string">
+        SELECT DISTINCT sigungu_code
+        FROM public.sd_area_code
+        WHERE sido_code = '11'
+          AND level = 'SIGUNGU'
+          AND sigungu_code IS NOT NULL
+          AND sigungu_code != ''
+          AND is_active = TRUE
+        ORDER BY sigungu_code
+    </select>
+
     <select id="existsAreaCode" parameterType="string" resultType="boolean">
         SELECT EXISTS (
             SELECT 1

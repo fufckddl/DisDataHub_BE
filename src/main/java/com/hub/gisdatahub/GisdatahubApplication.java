@@ -2,9 +2,11 @@ package com.hub.gisdatahub;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 import com.hub.gisdatahub.config.DotenvBootstrap;
 
+@EnableScheduling
 @SpringBootApplication
 public class GisdatahubApplication {
 
