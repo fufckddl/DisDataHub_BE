@@ -46,4 +46,18 @@ public class NoticeServiceImpl implements NoticeService {
     public BoardPostDto getAdminNoticeDetailData(Long postId) {
         return noticeSqlMapper.findByAdminDetailPage(postId);
     }
+
+    @Override
+    public void updateNoticePost(Long postId, BoardPostDto boardPostDto) {
+        boardPostDto.setPostId(postId);
+
+        if (boardPostDto.getVisibilityStatus() == null) {
+            boardPostDto.setVisibilityStatus("PUBLIC");
+        }
+        if (boardPostDto.getPinnedYn() == null) {
+            boardPostDto.setPinnedYn("N");
+        }
+
+        noticeSqlMapper.updateNoticePost(boardPostDto);
+    }
 }
