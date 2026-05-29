@@ -69,4 +69,16 @@ public class NoticeController {
 
         return response;
     }
+
+    @GetMapping("adminNoticeDetail/{postId}")
+    public Map<String, Object> adminNoticeDetailPage(@PathVariable("postId") Long postId) {
+        Map<String, Object> response = new HashMap<>();
+
+        BoardPostDto adminNoticeDetail = noticeService.getAdminNoticeDetailData(postId);
+
+        response.put("adminNoticeDetail", adminNoticeDetail);
+        response.put("result", "success");
+
+        return response;
+    }
 }

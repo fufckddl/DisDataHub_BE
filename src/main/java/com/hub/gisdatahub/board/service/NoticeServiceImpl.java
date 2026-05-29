@@ -19,10 +19,12 @@ public class NoticeServiceImpl implements NoticeService {
         return noticeSqlMapper.findByNoticeList();
     }
 
+    @Override
     public BoardPostDto getNoticeDetailData(Long postId) {
         return noticeSqlMapper.findByNoticeDetailData(postId);
     }
 
+    @Override
     public void createNoticePost(BoardPostDto boardPostDto) {
         if (boardPostDto.getVisibilityStatus() == null) {
             boardPostDto.setVisibilityStatus("PUBLIC");
@@ -40,5 +42,8 @@ public class NoticeServiceImpl implements NoticeService {
         return noticeSqlMapper.findAdminNoticeList();
     }
 
-    
+    @Override
+    public BoardPostDto getAdminNoticeDetailData(Long postId) {
+        return noticeSqlMapper.findByAdminDetailPage(postId);
+    }
 }

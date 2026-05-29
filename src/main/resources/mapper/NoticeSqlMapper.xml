@@ -84,4 +84,25 @@
         ORDER BY pinned_yn DESC, created_at DESC
     </select>
     
+    <select id="findByAdminDetailPage"
+        parameterType="long"
+        resultType="com.hub.gisdatahub.board.dto.BoardPostDto"
+        >
+        SELECT
+            post_id,
+            board_type_code,
+            user_id,
+            title,
+            content,
+            visibility_status,
+            pinned_yn,
+            created_at,
+            view_count,
+            updated_at,
+            deleted_yn
+        FROM sd_board_post
+        WHERE post_id = #{postId}
+            AND board_type_code = 'NOTICE'
+            AND deleted_yn = 'N'
+    </select>
 </mapper>
