@@ -1,5 +1,7 @@
 package com.hub.gisdatahub.dashboard.controller;
 
+import java.util.List;
+
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -8,6 +10,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.hub.gisdatahub.dashboard.dto.AreaNavigationResponse;
 import com.hub.gisdatahub.dashboard.dto.AreaPopulationChartResponse;
+import com.hub.gisdatahub.dashboard.dto.DashboardGisDataSourceResponse;
+import com.hub.gisdatahub.dashboard.dto.DashboardGisDatasetResponse;
+import com.hub.gisdatahub.dashboard.dto.DashboardGisMetricResponse;
 import com.hub.gisdatahub.dashboard.dto.FloatingPopulationChartResponse;
 import com.hub.gisdatahub.dashboard.service.DashboardBoundaryService;
 
@@ -43,6 +48,33 @@ public class DashboardBoundaryController {
         @RequestParam(required = false) String hour
     ){
         return dashboardBoundaryService.getAreaPopulation(areaCode, areaLevel, date, hour);
+    }
+
+
+    @GetMapping("/gis-data-sources")
+    public List<DashboardGisDataSourceResponse> getDashboardGisDataSources(
+        @RequestParam(required = false) String sourceCategory,
+        @RequestParam(required = false) Integer priority,
+        @RequestParam(defaultValue = "true") boolean activeOnly
+    ) {
+        return dashboardBoundaryService.getDashboardGisDataSources(sourceCategory, priority, activeOnly);
+    }
+
+    @GetMapping("/gis-datasets")
+    public List<DashboardGisDatasetResponse> getDashboardGisDatasets(
+        @RequestParam(required = false) String sourceCode,
+        @RequestParam(required = false) String layerType,
+        @RequestParam(defaultValue = "true") boolean activeOnly
+    ) {
+        return dashboardBoundaryService.getDashboardGisDatasets(sourceCode, layerType, activeOnly);
+    }
+
+    @GetMapping("/gis-metrics")
+    public List<DashboardGisMetricResponse> getDashboardGisMetrics(
+        @RequestParam(required = false) String sourceCode,
+        @RequestParam(required = false) String datasetCode
+    ) {
+        return dashboardBoundaryService.getDashboardGisMetrics(sourceCode, datasetCode);
     }
 
     @GetMapping("/floating-population")

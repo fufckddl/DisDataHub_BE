@@ -17,6 +17,9 @@ import org.springframework.web.server.ResponseStatusException;
 import com.hub.gisdatahub.dashboard.dto.AreaNavigationResponse;
 import com.hub.gisdatahub.dashboard.dto.AreaPopulationChartResponse;
 import com.hub.gisdatahub.dashboard.dto.AreaPopulationDto;
+import com.hub.gisdatahub.dashboard.dto.DashboardGisDataSourceResponse;
+import com.hub.gisdatahub.dashboard.dto.DashboardGisDatasetResponse;
+import com.hub.gisdatahub.dashboard.dto.DashboardGisMetricResponse;
 import com.hub.gisdatahub.dashboard.dto.FloatingPopulationChartResponse;
 import com.hub.gisdatahub.dashboard.dto.FloatingPopulationRankItem;
 import com.hub.gisdatahub.dashboard.dto.PopulationChartDataset;
@@ -327,14 +330,178 @@ public class DashboardBoundaryService {
                 .build();
     }
 
+    public List<DashboardGisDataSourceResponse> getDashboardGisDataSources(
+            String sourceCategory,
+            Integer priority,
+            boolean activeOnly) {
+        String resolvedSourceCategory = normalizeOptional(sourceCategory);
+        String categoryFilter = resolvedSourceCategory == null ? "" : "AND s.source_category = :sourceCategory";
+        String priorityFilter = priority == null ? "" : "AND s.priority = :priority";
+        String activeFilter = activeOnly ? "AND s.is_active = TRUE" : "";
+        String sql = """
+                SELECT
+                    s.source_code,
+                    s.source_name,
+                    s.provider_name,
+                    s.provider_type,
+                    s.source_category,
+                    s.official_url,
+                    s.api_endpoint,
+                    s.api_type,
+                    s.data_format,
+                    s.auth_type,
+                    s.spatial_coverage,
+                    s.spatial_granularity,
+                    s.temporal_granularity,
+                    s.update_cycle,
+                    s.coordinate_system,
+                    s.has_geometry,
+                    s.has_point_coordinate,
+                    s.collection_difficulty,
+                    s.priority,
+                    s.verification_status,
+                    s.is_active,
+                    (
+                        SELECT COUNT(*)::int
+                        FROM public.sd_dashboard_dataset d
+                        WHERE d.source_code = s.source_code
+                    ) AS dataset_count,
+                    (
+                        SELECT COUNT(*)::int
+                        FROM public.sd_dashboard_metric m
+                        WHERE EXISTS (
+                            SELECT 1
+                            FROM public.sd_dashboard_dataset d
+                            WHERE d.dataset_code = m.dataset_code
+                              AND d.source_code = s.source_code
+                        )
+                    ) AS metric_count
+                FROM public.sd_dashboard_data_source s
+                WHERE 1 = 1
+                  %s
+                  %s
+                  %s
+                ORDER BY s.priority, s.source_category, s.source_code
+                """.formatted(categoryFilter, priorityFilter, activeFilter);
+
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        if (resolvedSourceCategory != null) {
+            params.addValue("sourceCategory", resolvedSourceCategory);
+        }
+        if (priority != null) {
+            params.addValue("priority", priority);
+        }
+
+        return jdbcTemplate.query(sql, params, (rs, rowNum) -> mapDashboardGisDataSource(rs));
+    }
+
+    public List<DashboardGisDatasetResponse> getDashboardGisDatasets(
+            String sourceCode,
+            String layerType,
+            boolean activeOnly) {
+        String resolvedSourceCode = normalizeOptional(sourceCode);
+        String resolvedLayerType = normalizeOptionalUpper(layerType);
+        String sourceFilter = resolvedSourceCode == null ? "" : "AND d.source_code = :sourceCode";
+        String layerFilter = resolvedLayerType == null ? "" : "AND d.dashboard_layer_type = :layerType";
+        String activeFilter = activeOnly ? "AND s.is_active = TRUE" : "";
+        String sql = """
+                SELECT
+                    d.source_code,
+                    d.dataset_code,
+                    d.dataset_name,
+                    d.dashboard_layer_type,
+                    d.dashboard_metric_hint,
+                    d.default_geometry_type,
+                    d.default_area_level,
+                    d.spatial_join_strategy,
+                    d.collection_policy,
+                    d.display_priority,
+                    d.is_initial_candidate,
+                    (
+                        SELECT COUNT(*)::int
+                        FROM public.sd_dashboard_metric m
+                        WHERE m.dataset_code = d.dataset_code
+                    ) AS metric_count,
+                    (
+                        SELECT COUNT(*)::int
+                        FROM public.sd_dashboard_area_observation o
+                        WHERE o.dataset_code = d.dataset_code
+                    ) AS observation_count,
+                    (
+                        SELECT COUNT(*)::int
+                        FROM public.sd_dashboard_geo_feature f
+                        WHERE f.dataset_code = d.dataset_code
+                    ) AS feature_count
+                FROM public.sd_dashboard_dataset d
+                JOIN public.sd_dashboard_data_source s
+                    ON s.source_code = d.source_code
+                WHERE 1 = 1
+                  %s
+                  %s
+                  %s
+                ORDER BY d.display_priority, d.source_code, d.dataset_code
+                """.formatted(sourceFilter, layerFilter, activeFilter);
+
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        if (resolvedSourceCode != null) {
+            params.addValue("sourceCode", resolvedSourceCode);
+        }
+        if (resolvedLayerType != null) {
+            params.addValue("layerType", resolvedLayerType);
+        }
+
+        return jdbcTemplate.query(sql, params, (rs, rowNum) -> mapDashboardGisDataset(rs));
+    }
+
+    public List<DashboardGisMetricResponse> getDashboardGisMetrics(String sourceCode, String datasetCode) {
+        String resolvedSourceCode = normalizeOptional(sourceCode);
+        String resolvedDatasetCode = normalizeOptional(datasetCode);
+        String sourceFilter = resolvedSourceCode == null ? "" : "AND d.source_code = :sourceCode";
+        String datasetFilter = resolvedDatasetCode == null ? "" : "AND m.dataset_code = :datasetCode";
+        String sql = """
+                SELECT
+                    m.dataset_code,
+                    m.metric_code,
+                    m.metric_name,
+                    m.value_type,
+                    m.unit,
+                    m.chart_group,
+                    m.sort_order,
+                    m.is_default
+                FROM public.sd_dashboard_metric m
+                JOIN public.sd_dashboard_dataset d
+                    ON d.dataset_code = m.dataset_code
+                WHERE 1 = 1
+                  %s
+                  %s
+                ORDER BY d.display_priority, m.dataset_code, m.sort_order, m.metric_code
+                """.formatted(sourceFilter, datasetFilter);
+
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        if (resolvedSourceCode != null) {
+            params.addValue("sourceCode", resolvedSourceCode);
+        }
+        if (resolvedDatasetCode != null) {
+            params.addValue("datasetCode", resolvedDatasetCode);
+        }
+
+        return jdbcTemplate.query(sql, params, (rs, rowNum) -> mapDashboardGisMetric(rs));
+    }
+
     private String getSidoBoundaries(String sidoCode, Bbox bbox) {
         String sidoFilter = sidoCode == null ? "" : "AND c.sido_code = :sidoCode";
         String sql = """
-                WITH features AS (
-                    SELECT jsonb_build_object(
-                        'type', 'Feature',
-                        'geometry', ST_AsGeoJSON(
-                            ST_SimplifyPreserveTopology(
+                WITH sido_rows AS (
+                    SELECT
+                        c.area_code,
+                        c.sido_code,
+                        c.sigungu_code,
+                        c.eupmyeondong_code,
+                        c.name,
+                        c.full_name,
+                        c.level,
+                        (
+                            SELECT ST_SimplifyPreserveTopology(
                                 ST_MakeValid(
                                     ST_Buffer(
                                         ST_UnaryUnion(ST_Collect(
@@ -347,9 +514,42 @@ public class DashboardBoundaryService {
                                     )
                                 ),
                                 0.005
-                            ),
-                            5
-                        )::jsonb,
+                            )
+                            FROM public.sd_area_code child
+                            JOIN public.sd_area_boundary b
+                                ON b.area_code = child.area_code
+                               AND b.boundary_type = 'SIGUNGU'
+                            WHERE child.sido_code = c.sido_code
+                              AND child.level = 'SIGUNGU'
+                              AND child.is_active = TRUE
+                              AND ST_Intersects(
+                                  b.geom,
+                                  ST_MakeEnvelope(:minLon, :minLat, :maxLon, :maxLat, 4326)
+                              )
+                        ) AS geom
+                    FROM public.sd_area_code c
+                    WHERE c.level = 'SIDO'
+                      AND c.is_active = TRUE
+                      AND EXISTS (
+                          SELECT 1
+                          FROM public.sd_area_code child
+                          JOIN public.sd_area_boundary b
+                              ON b.area_code = child.area_code
+                             AND b.boundary_type = 'SIGUNGU'
+                          WHERE child.sido_code = c.sido_code
+                            AND child.level = 'SIGUNGU'
+                            AND child.is_active = TRUE
+                            AND ST_Intersects(
+                                b.geom,
+                                ST_MakeEnvelope(:minLon, :minLat, :maxLon, :maxLat, 4326)
+                            )
+                      )
+                      %s
+                ),
+                features AS (
+                    SELECT jsonb_build_object(
+                        'type', 'Feature',
+                        'geometry', ST_AsGeoJSON(c.geom, 5)::jsonb,
                         'properties', jsonb_build_object(
                             'areaCode', c.area_code,
                             'sidoCode', c.sido_code,
@@ -361,29 +561,9 @@ public class DashboardBoundaryService {
 %s
                         )
                     ) AS feature
-                    FROM public.sd_area_code c
-                    JOIN public.sd_area_code child
-                        ON child.sido_code = c.sido_code
-                       AND child.level = 'SIGUNGU'
-                       AND child.is_active = TRUE
-                    JOIN public.sd_area_boundary b
-                        ON b.area_code = child.area_code
-                       AND b.boundary_type = 'SIGUNGU'
-                    WHERE c.level = 'SIDO'
-                      AND c.is_active = TRUE
-                      AND ST_Intersects(
-                          b.geom,
-                          ST_MakeEnvelope(:minLon, :minLat, :maxLon, :maxLat, 4326)
-                      )
-                      %s
-                    GROUP BY
-                        c.area_code,
-                        c.sido_code,
-                        c.sigungu_code,
-                        c.eupmyeondong_code,
-                        c.name,
-                        c.full_name,
-                        c.level
+                    FROM sido_rows c
+                    WHERE c.geom IS NOT NULL
+                      AND NOT ST_IsEmpty(c.geom)
                     ORDER BY c.sido_code
                 )
                 SELECT jsonb_build_object(
@@ -391,7 +571,7 @@ public class DashboardBoundaryService {
                     'features', COALESCE(jsonb_agg(feature), '[]'::jsonb)
                 )::text
                 FROM features
-                """.formatted(NAVIGATION_PROPERTIES_SQL, sidoFilter);
+                """.formatted(sidoFilter, NAVIGATION_PROPERTIES_SQL);
 
         String geoJson = queryGeoJson(sql, sidoCode, null, bbox);
         return geoJson == null ? EMPTY_FEATURE_COLLECTION : geoJson;
@@ -1063,10 +1243,10 @@ public class DashboardBoundaryService {
                         MAX(hour) AS hour
                     FROM target_rows
                 ),
-                aggregated AS (
+                labeled_rows AS (
                     SELECT
                         %s AS label,
-                        COALESCE(SUM(f.visitor_count), 0)::numeric AS visitor_count
+                        f.visitor_count
                     FROM target_rows f
                     LEFT JOIN public.sd_area_code ac
                         ON ac.area_code = f.area_code
@@ -1074,7 +1254,20 @@ public class DashboardBoundaryService {
                         ON sg.level = 'SIGUNGU'
                        AND sg.sido_code = ac.sido_code
                        AND sg.sigungu_code = ac.sigungu_code
-                    GROUP BY label
+                ),
+                distinct_labels AS (
+                    SELECT DISTINCT label
+                    FROM labeled_rows
+                ),
+                aggregated AS (
+                    SELECT
+                        dl.label,
+                        (
+                            SELECT COALESCE(SUM(lr.visitor_count), 0)::numeric
+                            FROM labeled_rows lr
+                            WHERE lr.label = dl.label
+                        ) AS visitor_count
+                    FROM distinct_labels dl
                 )
                 SELECT
                     a.label,
@@ -1110,6 +1303,83 @@ public class DashboardBoundaryService {
         }
 
         return null;
+    }
+
+    private String normalizeOptional(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
+    }
+
+    private String normalizeOptionalUpper(String value) {
+        String normalized = normalizeOptional(value);
+        return normalized == null ? null : normalized.toUpperCase();
+    }
+
+    private DashboardGisDataSourceResponse mapDashboardGisDataSource(ResultSet rs) throws SQLException {
+        return DashboardGisDataSourceResponse.builder()
+                .sourceCode(rs.getString("source_code"))
+                .sourceName(rs.getString("source_name"))
+                .providerName(rs.getString("provider_name"))
+                .providerType(rs.getString("provider_type"))
+                .sourceCategory(rs.getString("source_category"))
+                .officialUrl(rs.getString("official_url"))
+                .apiEndpoint(rs.getString("api_endpoint"))
+                .apiType(rs.getString("api_type"))
+                .dataFormat(rs.getString("data_format"))
+                .authType(rs.getString("auth_type"))
+                .spatialCoverage(rs.getString("spatial_coverage"))
+                .spatialGranularity(rs.getString("spatial_granularity"))
+                .temporalGranularity(rs.getString("temporal_granularity"))
+                .updateCycle(rs.getString("update_cycle"))
+                .coordinateSystem(rs.getString("coordinate_system"))
+                .hasGeometry(rs.getBoolean("has_geometry"))
+                .hasPointCoordinate(rs.getBoolean("has_point_coordinate"))
+                .collectionDifficulty(rs.getString("collection_difficulty"))
+                .priority(nullableInt(rs, "priority"))
+                .verificationStatus(rs.getString("verification_status"))
+                .isActive(rs.getBoolean("is_active"))
+                .datasetCount(nullableInt(rs, "dataset_count"))
+                .metricCount(nullableInt(rs, "metric_count"))
+                .build();
+    }
+
+    private DashboardGisDatasetResponse mapDashboardGisDataset(ResultSet rs) throws SQLException {
+        return DashboardGisDatasetResponse.builder()
+                .sourceCode(rs.getString("source_code"))
+                .datasetCode(rs.getString("dataset_code"))
+                .datasetName(rs.getString("dataset_name"))
+                .dashboardLayerType(rs.getString("dashboard_layer_type"))
+                .dashboardMetricHint(rs.getString("dashboard_metric_hint"))
+                .defaultGeometryType(rs.getString("default_geometry_type"))
+                .defaultAreaLevel(rs.getString("default_area_level"))
+                .spatialJoinStrategy(rs.getString("spatial_join_strategy"))
+                .collectionPolicy(rs.getString("collection_policy"))
+                .displayPriority(nullableInt(rs, "display_priority"))
+                .isInitialCandidate(rs.getBoolean("is_initial_candidate"))
+                .metricCount(nullableInt(rs, "metric_count"))
+                .observationCount(nullableInt(rs, "observation_count"))
+                .featureCount(nullableInt(rs, "feature_count"))
+                .build();
+    }
+
+    private DashboardGisMetricResponse mapDashboardGisMetric(ResultSet rs) throws SQLException {
+        return DashboardGisMetricResponse.builder()
+                .datasetCode(rs.getString("dataset_code"))
+                .metricCode(rs.getString("metric_code"))
+                .metricName(rs.getString("metric_name"))
+                .valueType(rs.getString("value_type"))
+                .unit(rs.getString("unit"))
+                .chartGroup(rs.getString("chart_group"))
+                .sortOrder(nullableInt(rs, "sort_order"))
+                .isDefault(rs.getBoolean("is_default"))
+                .build();
+    }
+
+    private Integer nullableInt(ResultSet rs, String column) throws SQLException {
+        int value = rs.getInt(column);
+        return rs.wasNull() ? null : value;
     }
 
     private AreaMeta mapAreaMeta(ResultSet rs) throws SQLException {

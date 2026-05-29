@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.hub.gisdatahub.dashboard.dto.DashboardGisCatalogSeedResult;
+import com.hub.gisdatahub.opendata.collect.service.DashboardGisCatalogSeedService;
 import com.hub.gisdatahub.opendata.collect.service.DataCollectService;
 
 @RestController
@@ -18,6 +20,9 @@ public class DataCollectController {
     
     @Autowired
     private DataCollectService dataCollectService;
+
+    @Autowired
+    private DashboardGisCatalogSeedService dashboardGisCatalogSeedService;
 
     // 스케줄러와 동일한 방식으로 행안부 주민등록 인구를 OpenAPI에서 수집해 DB에 저장합니다.
     @PostMapping("/living-population/sigungu/collect")
@@ -49,6 +54,13 @@ public class DataCollectController {
             "target", "IotVdata018",
             "savedCount", savedCount
         ));
+    }
+
+
+    // SQL로 생성한 대시보드 GIS 카탈로그 테이블에 Markdown 후보표를 등록/갱신합니다.
+    @PostMapping("/dashboard-gis/catalog/seed")
+    public ResponseEntity<DashboardGisCatalogSeedResult> seedDashboardGisCatalog() {
+        return ResponseEntity.ok(dashboardGisCatalogSeedService.seedCandidateCatalog());
     }
 
     // 서울 유동 인구

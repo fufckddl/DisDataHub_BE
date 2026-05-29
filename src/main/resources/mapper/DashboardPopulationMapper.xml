@@ -292,9 +292,9 @@
         )
         SELECT
             MIN(p.resident_population_id) AS population_id,
-            s.area_code,
-            s.name AS area_name,
-            s.full_name,
+            (SELECT s.area_code FROM selected_area s LIMIT 1) AS area_code,
+            (SELECT s.name FROM selected_area s LIMIT 1) AS area_name,
+            (SELECT s.full_name FROM selected_area s LIMIT 1) AS full_name,
             'MOIS_ADMM_SEXD_AGE_PPLTN' AS source_code,
             CAST(SUBSTRING(MAX(p.stats_ym), 1, 4) || '-' || SUBSTRING(MAX(p.stats_ym), 5, 2) || '-01' AS date) AS base_date,
             '00' AS hour,
@@ -327,8 +327,7 @@
             MAX(p.created_at) AS created_at,
             MAX(p.updated_at) AS updated_at
         FROM filtered_population p
-        CROSS JOIN selected_area s
-        GROUP BY s.area_code, s.name, s.full_name
+        HAVING COUNT(*) > 0
     </select>
 
 </mapper>
