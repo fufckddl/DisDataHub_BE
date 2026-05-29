@@ -61,4 +61,7 @@ public class DatasetUploadDto {
     private String lonColumnName;    // 경도(X) 컬럼 이름
     private String latColumnName;    // 위도(Y) 컬럼 이름
     private String wktColumnName;    // WKT 컬럼 이름
+
+    // 엑셀 파싱 전용 타겟 시트 이름
+    private String sheetName;
 }

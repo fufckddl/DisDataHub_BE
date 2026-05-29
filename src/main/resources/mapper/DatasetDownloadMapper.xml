@@ -10,6 +10,7 @@
             d.title,
             d.description,
             d.provider,
+            d.is_public,
             d.created_at,
             f.file_extension,
             s.view_count,
@@ -160,5 +161,17 @@
         and view_ip = #{viewIp}
         and created_at >= #{fromTime}
     </select>    
+
+<!-- 데이터셋 업로드 한 사람의 소속기관 찾기 -->
+    <select id="findDatasetOwnerOrganization">
+        select u.organization  from sd_gis_dataset d
+        inner join sd_user u on d.created_by  = u.user_id
+        where d.dataset_id = #{datasetId};    
+    </select>
+
+    <select id="findUserOrganization">
+        select organization  from sd_user
+        where user_id = #{userId};
+    </select>
 
 </mapper>

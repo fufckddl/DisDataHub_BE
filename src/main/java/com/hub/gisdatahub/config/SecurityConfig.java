@@ -76,6 +76,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/board/notices/**").permitAll()
                         // 공지사항 게시글 테스트용 코드 추가 (비로그인 게시글작성 o)
                         .requestMatchers(HttpMethod.POST, "/api/board/notices/createNotice").permitAll()
+                        // 다운로드
+                        .requestMatchers(HttpMethod.GET, "/api/download/datasets", "/api/download/datasets/*").permitAll()
                         // 게시글 목록·상세 조회는 비로그인도 가능
                         // NOTE: 일부 환경에서 requestMatchers(HttpMethod.GET, "/api/articles/**")가 "/api/articles/{id}"에 매칭되지 않는 이슈가 있어
                         // AntPathRequestMatcher로 명시합니다.

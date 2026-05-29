@@ -1,0 +1,450 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.hub.gisdatahub.opendata.collect.mapper.MoisResidentPopulationMapper">
+
+    <select id="findSidoAdmmCodes" resultType="string">
+        SELECT DISTINCT
+            CASE
+                WHEN area_code IS NOT NULL AND LENGTH(area_code) = 10 THEN area_code
+                WHEN sido_code IS NOT NULL AND sido_code != '' THEN sido_code || '00000000'
+                ELSE NULL
+            END AS admm_cd
+        FROM public.sd_area_code
+        WHERE is_active = TRUE
+          AND sido_code IS NOT NULL
+          AND sido_code != ''
+          AND (
+              level = 'SIDO'
+              OR NOT EXISTS (
+                  SELECT 1
+                  FROM public.sd_area_code sido
+                  WHERE sido.level = 'SIDO'
+                    AND sido.is_active = TRUE
+                    AND sido.sido_code = sd_area_code.sido_code
+              )
+          )
+        ORDER BY admm_cd
+    </select>
+
+    <select id="findSigunguAdmmCodes" resultType="string">
+        SELECT DISTINCT
+            CASE
+                WHEN sigungu_code IS NOT NULL AND sigungu_code != '' THEN sigungu_code || '00000'
+                ELSE NULL
+            END AS admm_cd
+        FROM public.sd_area_code
+        WHERE is_active = TRUE
+          AND sigungu_code IS NOT NULL
+          AND sigungu_code != ''
+          AND (
+              level = 'SIGUNGU'
+              OR NOT EXISTS (
+                  SELECT 1
+                  FROM public.sd_area_code sigungu
+                  WHERE sigungu.level = 'SIGUNGU'
+                    AND sigungu.is_active = TRUE
+                    AND sigungu.sigungu_code = sd_area_code.sigungu_code
+              )
+          )
+        ORDER BY admm_cd
+    </select>
+
+    <select id="findEupmyeondongAdmmCodes" resultType="string">
+        SELECT DISTINCT
+            CASE
+                WHEN area_code IS NOT NULL AND LENGTH(area_code) = 10 THEN area_code
+                WHEN eupmyeondong_code IS NOT NULL AND eupmyeondong_code != '' THEN eupmyeondong_code || '00'
+                ELSE NULL
+            END AS admm_cd
+        FROM public.sd_area_code
+        WHERE level = 'EUPMYEONDONG'
+          AND is_active = TRUE
+        ORDER BY admm_cd
+    </select>
+
+    <select id="findAreaCodeByAdmmCd" resultType="string">
+        SELECT area_code
+        FROM (
+            SELECT
+                c.area_code,
+                CASE
+                    WHEN c.area_code = #{admmCd} THEN 0
+                    WHEN LENGTH(#{admmCd}) = 2
+                         AND c.level = 'SIDO'
+                         AND c.sido_code = #{admmCd} THEN 1
+                    WHEN LENGTH(#{admmCd}) = 10
+                         AND SUBSTRING(#{admmCd}, 3, 8) = '00000000'
+                         AND c.level = 'SIDO'
+                         AND c.sido_code = SUBSTRING(#{admmCd}, 1, 2) THEN 2
+                    WHEN LENGTH(#{admmCd}) = 5
+                         AND c.level = 'SIGUNGU'
+                         AND c.sigungu_code = #{admmCd} THEN 3
+                    WHEN LENGTH(#{admmCd}) = 10
+                         AND SUBSTRING(#{admmCd}, 6, 5) = '00000'
+                         AND c.level = 'SIGUNGU'
+                         AND c.sigungu_code = SUBSTRING(#{admmCd}, 1, 5) THEN 4
+                    WHEN LENGTH(#{admmCd}) = 8
+                         AND c.level = 'EUPMYEONDONG'
+                         AND c.eupmyeondong_code = #{admmCd} THEN 5
+                    WHEN LENGTH(#{admmCd}) = 10
+                         AND SUBSTRING(#{admmCd}, 9, 2) = '00'
+                         AND c.level = 'EUPMYEONDONG'
+                         AND c.eupmyeondong_code = SUBSTRING(#{admmCd}, 1, 8) THEN 6
+                    ELSE 9
+                END AS match_priority
+            FROM public.sd_area_code c
+            WHERE c.is_active = TRUE
+              AND (
+                  c.area_code = #{admmCd}
+                  OR (
+                      LENGTH(#{admmCd}) = 2
+                      AND c.level = 'SIDO'
+                      AND c.sido_code = #{admmCd}
+                  )
+                  OR (
+                      LENGTH(#{admmCd}) = 10
+                      AND SUBSTRING(#{admmCd}, 3, 8) = '00000000'
+                      AND c.level = 'SIDO'
+                      AND c.sido_code = SUBSTRING(#{admmCd}, 1, 2)
+                  )
+                  OR (
+                      LENGTH(#{admmCd}) = 5
+                      AND c.level = 'SIGUNGU'
+                      AND c.sigungu_code = #{admmCd}
+                  )
+                  OR (
+                      LENGTH(#{admmCd}) = 10
+                      AND SUBSTRING(#{admmCd}, 6, 5) = '00000'
+                      AND c.level = 'SIGUNGU'
+                      AND c.sigungu_code = SUBSTRING(#{admmCd}, 1, 5)
+                  )
+                  OR (
+                      LENGTH(#{admmCd}) = 8
+                      AND c.level = 'EUPMYEONDONG'
+                      AND c.eupmyeondong_code = #{admmCd}
+                  )
+                  OR (
+                      LENGTH(#{admmCd}) = 10
+                      AND SUBSTRING(#{admmCd}, 9, 2) = '00'
+                      AND c.level = 'EUPMYEONDONG'
+                      AND c.eupmyeondong_code = SUBSTRING(#{admmCd}, 1, 8)
+                  )
+              )
+        ) candidates
+        ORDER BY match_priority, area_code
+        LIMIT 1
+    </select>
+
+    <select id="findAreaCodeByAdmmCodeAndSourceNames" resultType="string">
+        SELECT c.area_code
+        FROM public.sd_area_code c
+        WHERE c.is_active = TRUE
+          AND c.level = #{areaLevel}
+        <if test="admmCd != null and admmCd != ''">
+          AND LENGTH(#{admmCd}) >= 2
+          AND c.sido_code = SUBSTRING(#{admmCd}, 1, 2)
+        </if>
+        <if test="admmCd != null and admmCd != '' and areaLevel != 'SIDO'">
+          AND LENGTH(#{admmCd}) >= 5
+          AND c.sigungu_code = SUBSTRING(#{admmCd}, 1, 5)
+        </if>
+        <if test="dongNm != null and dongNm != ''">
+          AND (
+              c.name = #{dongNm}
+              OR c.name = REPLACE(#{dongNm}, '제', '')
+              OR c.name = REGEXP_REPLACE(REPLACE(#{dongNm}, '제', ''), '[0-9]+동$', '동')
+              OR c.name = REGEXP_REPLACE(REPLACE(#{dongNm}, '제', ''), '^(.+?)([0-9]+)가.*동$', '\\1동\\2가')
+          )
+        </if>
+        ORDER BY
+        <choose>
+            <when test="dongNm != null and dongNm != ''">
+            CASE
+                    WHEN c.name = #{dongNm} THEN 0
+                    WHEN c.name = REPLACE(#{dongNm}, '제', '') THEN 1
+                    WHEN c.name = REGEXP_REPLACE(REPLACE(#{dongNm}, '제', ''), '[0-9]+동$', '동') THEN 2
+                    WHEN c.name = REGEXP_REPLACE(REPLACE(#{dongNm}, '제', ''), '^(.+?)([0-9]+)가.*동$', '\\1동\\2가') THEN 3
+                    ELSE 4
+                END,
+            </when>
+        </choose>
+            c.area_code
+        LIMIT 1
+    </select>
+
+    <select id="findAreaCodeBySourceNames" resultType="string">
+        SELECT c.area_code
+        FROM public.sd_area_code c
+        LEFT JOIN public.sd_area_code sido
+            ON sido.level = 'SIDO'
+           AND sido.is_active = TRUE
+           AND sido.sido_code = c.sido_code
+        LEFT JOIN public.sd_area_code sigungu
+            ON sigungu.level = 'SIGUNGU'
+           AND sigungu.is_active = TRUE
+           AND sigungu.sido_code = c.sido_code
+           AND sigungu.sigungu_code = c.sigungu_code
+        WHERE c.is_active = TRUE
+          AND c.level = #{areaLevel}
+        <if test="ctpvNm != null and ctpvNm != ''">
+          AND (sido.name = #{ctpvNm} OR c.name = #{ctpvNm})
+        </if>
+        <if test="sggNm != null and sggNm != ''">
+          AND (sigungu.name = #{sggNm} OR c.name = #{sggNm})
+        </if>
+        <if test="dongNm != null and dongNm != ''">
+          AND (
+              c.name = #{dongNm}
+              OR c.name = REPLACE(#{dongNm}, '제', '')
+              OR c.name = REGEXP_REPLACE(REPLACE(#{dongNm}, '제', ''), '[0-9]+동$', '동')
+              OR c.name = REGEXP_REPLACE(REPLACE(#{dongNm}, '제', ''), '^(.+?)([0-9]+)가.*동$', '\\1동\\2가')
+          )
+        </if>
+        ORDER BY
+        <choose>
+            <when test="dongNm != null and dongNm != ''">
+            CASE
+                    WHEN c.name = #{dongNm} THEN 0
+                    WHEN c.name = REPLACE(#{dongNm}, '제', '') THEN 1
+                    WHEN c.name = REGEXP_REPLACE(REPLACE(#{dongNm}, '제', ''), '[0-9]+동$', '동') THEN 2
+                    WHEN c.name = REGEXP_REPLACE(REPLACE(#{dongNm}, '제', ''), '^(.+?)([0-9]+)가.*동$', '\\1동\\2가') THEN 3
+                    ELSE 4
+                END,
+            </when>
+        </choose>
+            c.area_code
+        LIMIT 1
+    </select>
+
+    <insert id="upsert" parameterType="com.hub.gisdatahub.opendata.collect.dto.mois.MoisResidentPopulationRow">
+        INSERT INTO public.sd_resident_population (
+            area_code,
+            admm_cd,
+            area_level,
+            api_lv,
+            reg_se_cd,
+            stats_ym,
+            ctpv_nm,
+            sgg_nm,
+            dong_nm,
+            tong,
+            ban,
+            total_population,
+            male_population,
+            female_population,
+            male_0_9,
+            male_10_19,
+            male_20_29,
+            male_30_39,
+            male_40_49,
+            male_50_59,
+            male_60_69,
+            male_70_79,
+            male_80_89,
+            male_90_99,
+            male_100_over,
+            female_0_9,
+            female_10_19,
+            female_20_29,
+            female_30_39,
+            female_40_49,
+            female_50_59,
+            female_60_69,
+            female_70_79,
+            female_80_89,
+            female_90_99,
+            female_100_over,
+            metadata,
+            created_at,
+            updated_at
+        )
+        VALUES (
+            #{areaCode},
+            #{admmCd},
+            #{areaLevel},
+            #{apiLv},
+            #{regSeCd},
+            #{statsYm},
+            #{ctpvNm},
+            #{sggNm},
+            #{dongNm},
+            #{tong},
+            #{ban},
+            #{totalPopulation},
+            #{malePopulation},
+            #{femalePopulation},
+            #{male0To9},
+            #{male10To19},
+            #{male20To29},
+            #{male30To39},
+            #{male40To49},
+            #{male50To59},
+            #{male60To69},
+            #{male70To79},
+            #{male80To89},
+            #{male90To99},
+            #{male100Over},
+            #{female0To9},
+            #{female10To19},
+            #{female20To29},
+            #{female30To39},
+            #{female40To49},
+            #{female50To59},
+            #{female60To69},
+            #{female70To79},
+            #{female80To89},
+            #{female90To99},
+            #{female100Over},
+            CAST(#{metadata} AS jsonb),
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (stats_ym, reg_se_cd, area_level, admm_cd, COALESCE(tong, ''), COALESCE(ban, ''))
+        DO UPDATE SET
+            area_code = EXCLUDED.area_code,
+            api_lv = EXCLUDED.api_lv,
+            ctpv_nm = EXCLUDED.ctpv_nm,
+            sgg_nm = EXCLUDED.sgg_nm,
+            dong_nm = EXCLUDED.dong_nm,
+            total_population = EXCLUDED.total_population,
+            male_population = EXCLUDED.male_population,
+            female_population = EXCLUDED.female_population,
+            male_0_9 = EXCLUDED.male_0_9,
+            male_10_19 = EXCLUDED.male_10_19,
+            male_20_29 = EXCLUDED.male_20_29,
+            male_30_39 = EXCLUDED.male_30_39,
+            male_40_49 = EXCLUDED.male_40_49,
+            male_50_59 = EXCLUDED.male_50_59,
+            male_60_69 = EXCLUDED.male_60_69,
+            male_70_79 = EXCLUDED.male_70_79,
+            male_80_89 = EXCLUDED.male_80_89,
+            male_90_99 = EXCLUDED.male_90_99,
+            male_100_over = EXCLUDED.male_100_over,
+            female_0_9 = EXCLUDED.female_0_9,
+            female_10_19 = EXCLUDED.female_10_19,
+            female_20_29 = EXCLUDED.female_20_29,
+            female_30_39 = EXCLUDED.female_30_39,
+            female_40_49 = EXCLUDED.female_40_49,
+            female_50_59 = EXCLUDED.female_50_59,
+            female_60_69 = EXCLUDED.female_60_69,
+            female_70_79 = EXCLUDED.female_70_79,
+            female_80_89 = EXCLUDED.female_80_89,
+            female_90_99 = EXCLUDED.female_90_99,
+            female_100_over = EXCLUDED.female_100_over,
+            metadata = EXCLUDED.metadata,
+            updated_at = CURRENT_TIMESTAMP
+    </insert>
+
+    <insert id="upsertTotal">
+        INSERT INTO public.sd_resident_population (
+            area_code,
+            admm_cd,
+            area_level,
+            api_lv,
+            reg_se_cd,
+            stats_ym,
+            ctpv_nm,
+            total_population,
+            male_population,
+            female_population,
+            male_0_9,
+            male_10_19,
+            male_20_29,
+            male_30_39,
+            male_40_49,
+            male_50_59,
+            male_60_69,
+            male_70_79,
+            male_80_89,
+            male_90_99,
+            male_100_over,
+            female_0_9,
+            female_10_19,
+            female_20_29,
+            female_30_39,
+            female_40_49,
+            female_50_59,
+            female_60_69,
+            female_70_79,
+            female_80_89,
+            female_90_99,
+            female_100_over,
+            metadata,
+            created_at,
+            updated_at
+        )
+        SELECT
+            NULL AS area_code,
+            '0000000000' AS admm_cd,
+            'TOTAL' AS area_level,
+            NULL AS api_lv,
+            #{regSeCd} AS reg_se_cd,
+            #{statsYm} AS stats_ym,
+            '대한민국' AS ctpv_nm,
+            SUM(total_population),
+            SUM(male_population),
+            SUM(female_population),
+            SUM(male_0_9),
+            SUM(male_10_19),
+            SUM(male_20_29),
+            SUM(male_30_39),
+            SUM(male_40_49),
+            SUM(male_50_59),
+            SUM(male_60_69),
+            SUM(male_70_79),
+            SUM(male_80_89),
+            SUM(male_90_99),
+            SUM(male_100_over),
+            SUM(female_0_9),
+            SUM(female_10_19),
+            SUM(female_20_29),
+            SUM(female_30_39),
+            SUM(female_40_49),
+            SUM(female_50_59),
+            SUM(female_60_69),
+            SUM(female_70_79),
+            SUM(female_80_89),
+            SUM(female_90_99),
+            SUM(female_100_over),
+            jsonb_build_object('source', 'MOIS_ADMM_SEXD_AGE_PPLTN', 'aggregation', 'SIDO_SUM'),
+            CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP
+        FROM public.sd_resident_population
+        WHERE stats_ym = #{statsYm}
+          AND reg_se_cd = #{regSeCd}
+          AND area_level = 'SIDO'
+        HAVING COUNT(*) > 0
+        ON CONFLICT (stats_ym, reg_se_cd, area_level, admm_cd, COALESCE(tong, ''), COALESCE(ban, ''))
+        DO UPDATE SET
+            total_population = EXCLUDED.total_population,
+            male_population = EXCLUDED.male_population,
+            female_population = EXCLUDED.female_population,
+            male_0_9 = EXCLUDED.male_0_9,
+            male_10_19 = EXCLUDED.male_10_19,
+            male_20_29 = EXCLUDED.male_20_29,
+            male_30_39 = EXCLUDED.male_30_39,
+            male_40_49 = EXCLUDED.male_40_49,
+            male_50_59 = EXCLUDED.male_50_59,
+            male_60_69 = EXCLUDED.male_60_69,
+            male_70_79 = EXCLUDED.male_70_79,
+            male_80_89 = EXCLUDED.male_80_89,
+            male_90_99 = EXCLUDED.male_90_99,
+            male_100_over = EXCLUDED.male_100_over,
+            female_0_9 = EXCLUDED.female_0_9,
+            female_10_19 = EXCLUDED.female_10_19,
+            female_20_29 = EXCLUDED.female_20_29,
+            female_30_39 = EXCLUDED.female_30_39,
+            female_40_49 = EXCLUDED.female_40_49,
+            female_50_59 = EXCLUDED.female_50_59,
+            female_60_69 = EXCLUDED.female_60_69,
+            female_70_79 = EXCLUDED.female_70_79,
+            female_80_89 = EXCLUDED.female_80_89,
+            female_90_99 = EXCLUDED.female_90_99,
+            female_100_over = EXCLUDED.female_100_over,
+            metadata = EXCLUDED.metadata,
+            updated_at = CURRENT_TIMESTAMP
+    </insert>
+
+</mapper>

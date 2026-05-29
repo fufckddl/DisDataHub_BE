@@ -19,15 +19,21 @@ public class DataCollectController {
     @Autowired
     private DataCollectService dataCollectService;
 
-    // 스케줄러와 동일한 방식으로 서울 자치구 생활인구를 OpenAPI에서 수집해 DB에 저장합니다.
+    // 스케줄러와 동일한 방식으로 행안부 주민등록 인구를 OpenAPI에서 수집해 DB에 저장합니다.
     @PostMapping("/living-population/sigungu/collect")
-    public ResponseEntity<Map<String, Object>> collectLivingPopulationBySigungu(
-        @RequestParam(required = false) String date,
-        @RequestParam(defaultValue = "00") String hour
+    public ResponseEntity<Map<String, Object>> collectResidentPopulation(
+        @RequestParam(required = false) String statsYm,
+        @RequestParam(defaultValue = "1") String regSeCd,
+        @RequestParam(required = false) String lv,
+        @RequestParam(required = false) String sidoCode
     ) {
-        int savedCount = dataCollectService.collectSeoulSigunguLivingPopulation(date, hour);
+        int savedCount = dataCollectService.collectResidentPopulation(statsYm, regSeCd, lv, sidoCode);
         return ResponseEntity.ok(Map.of(
-            "target", "SPOP_LOCAL_RESD_JACHI",
+            "target", "MOIS_ADMM_SEXD_AGE_PPLTN",
+            "statsYm", statsYm == null ? "" : statsYm,
+            "regSeCd", regSeCd,
+            "lv", lv == null ? "ALL" : lv,
+            "sidoCode", sidoCode == null ? "" : sidoCode,
             "savedCount", savedCount
         ));
     }

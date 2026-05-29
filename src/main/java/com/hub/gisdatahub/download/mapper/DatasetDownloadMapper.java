@@ -56,9 +56,14 @@ public interface DatasetDownloadMapper {
     );    
     
 
+    // 데이터셋 업로드 한 사람의 소속기관 찾기
+    public String findDatasetOwnerOrganization(Long datasetId);
+
+    // 사용자의 소속기관 찾기
+    public String findUserOrganization(Integer userId);
 
 
-
+    
     
     
 }

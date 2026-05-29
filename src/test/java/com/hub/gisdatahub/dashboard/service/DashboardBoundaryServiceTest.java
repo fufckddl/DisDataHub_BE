@@ -150,33 +150,27 @@ class DashboardBoundaryServiceTest {
                 .malePopulation(new BigDecimal("490.5"))
                 .femalePopulation(new BigDecimal("510.0"))
                 .male0To9(new BigDecimal("1.1"))
-                .male10To14(new BigDecimal("2.2"))
-                .male15To19(new BigDecimal("3.3"))
-                .male20To24(new BigDecimal("4.4"))
-                .male25To29(new BigDecimal("5.5"))
-                .male30To34(new BigDecimal("6.6"))
-                .male35To39(new BigDecimal("7.7"))
-                .male40To44(new BigDecimal("8.8"))
-                .male45To49(new BigDecimal("9.9"))
-                .male50To54(new BigDecimal("10.1"))
-                .male55To59(new BigDecimal("11.1"))
-                .male60To64(new BigDecimal("12.1"))
-                .male65To69(new BigDecimal("13.1"))
-                .male70To74(new BigDecimal("14.1"))
-                .female0To9(new BigDecimal("15.1"))
-                .female10To14(new BigDecimal("16.1"))
-                .female15To19(new BigDecimal("17.1"))
-                .female20To24(new BigDecimal("18.1"))
-                .female25To29(new BigDecimal("19.1"))
-                .female30To34(new BigDecimal("20.1"))
-                .female35To39(new BigDecimal("21.1"))
-                .female40To44(new BigDecimal("22.1"))
-                .female45To49(new BigDecimal("23.1"))
-                .female50To54(new BigDecimal("24.1"))
-                .female55To59(new BigDecimal("25.1"))
-                .female60To64(new BigDecimal("26.1"))
-                .female65To69(new BigDecimal("27.1"))
-                .female70To74(new BigDecimal("28.1"))
+                .male10To19(new BigDecimal("2.2"))
+                .male20To29(new BigDecimal("3.3"))
+                .male30To39(new BigDecimal("4.4"))
+                .male40To49(new BigDecimal("5.5"))
+                .male50To59(new BigDecimal("6.6"))
+                .male60To69(new BigDecimal("7.7"))
+                .male70To79(new BigDecimal("8.8"))
+                .male80To89(new BigDecimal("9.9"))
+                .male90To99(new BigDecimal("10.1"))
+                .male100Over(new BigDecimal("11.1"))
+                .female0To9(new BigDecimal("12.1"))
+                .female10To19(new BigDecimal("13.1"))
+                .female20To29(new BigDecimal("14.1"))
+                .female30To39(new BigDecimal("15.1"))
+                .female40To49(new BigDecimal("16.1"))
+                .female50To59(new BigDecimal("17.1"))
+                .female60To69(new BigDecimal("18.1"))
+                .female70To79(new BigDecimal("19.1"))
+                .female80To89(new BigDecimal("20.1"))
+                .female90To99(new BigDecimal("21.1"))
+                .female100Over(new BigDecimal("22.1"))
                 .build();
 
         when(populationMapper.findAreaPopulation("11110", "SIGUNGU", baseDate, "03"))
@@ -186,23 +180,21 @@ class DashboardBoundaryServiceTest {
 
         verify(populationMapper).findAreaPopulation("11110", "SIGUNGU", baseDate, "03");
         assertThat(response.getLabels()).containsExactly(
-                "0-9", "10-14", "15-19", "20-24", "25-29", "30-34", "35-39",
-                "40-44", "45-49", "50-54", "55-59", "60-64", "65-69", "70-74");
+                "0-9", "10-19", "20-29", "30-39", "40-49", "50-59",
+                "60-69", "70-79", "80-89", "90-99", "100+");
         assertThat(response.getDatasets()).hasSize(2);
         assertThat(response.getDatasets().get(0).getLabel()).isEqualTo("남성");
         assertThat(response.getDatasets().get(0).getData()).containsExactlyElementsOf(List.of(
                 new BigDecimal("1.1"), new BigDecimal("2.2"), new BigDecimal("3.3"),
                 new BigDecimal("4.4"), new BigDecimal("5.5"), new BigDecimal("6.6"),
                 new BigDecimal("7.7"), new BigDecimal("8.8"), new BigDecimal("9.9"),
-                new BigDecimal("10.1"), new BigDecimal("11.1"), new BigDecimal("12.1"),
-                new BigDecimal("13.1"), new BigDecimal("14.1")));
+                new BigDecimal("10.1"), new BigDecimal("11.1")));
         assertThat(response.getDatasets().get(1).getLabel()).isEqualTo("여성");
         assertThat(response.getDatasets().get(1).getData()).containsExactlyElementsOf(List.of(
+                new BigDecimal("12.1"), new BigDecimal("13.1"), new BigDecimal("14.1"),
                 new BigDecimal("15.1"), new BigDecimal("16.1"), new BigDecimal("17.1"),
                 new BigDecimal("18.1"), new BigDecimal("19.1"), new BigDecimal("20.1"),
-                new BigDecimal("21.1"), new BigDecimal("22.1"), new BigDecimal("23.1"),
-                new BigDecimal("24.1"), new BigDecimal("25.1"), new BigDecimal("26.1"),
-                new BigDecimal("27.1"), new BigDecimal("28.1")));
+                new BigDecimal("21.1"), new BigDecimal("22.1")));
     }
 
     @Test
@@ -210,7 +202,7 @@ class DashboardBoundaryServiceTest {
         AreaPopulationDto population = AreaPopulationDto.builder()
                 .areaCode("11110")
                 .male0To9(new BigDecimal("1"))
-                .female70To74(new BigDecimal("2"))
+                .female100Over(new BigDecimal("2"))
                 .build();
 
         when(populationMapper.findAreaPopulation("11110", "SIGUNGU", null, null)).thenReturn(population);
@@ -221,14 +213,12 @@ class DashboardBoundaryServiceTest {
                 .containsExactly(
                         new BigDecimal("1"), BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                         BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-                        BigDecimal.ZERO, BigDecimal.ZERO);
+                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
         assertThat(response.getDatasets().get(1).getData())
                 .containsExactly(
                         BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
                         BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO,
-                        BigDecimal.ZERO, new BigDecimal("2"));
+                        BigDecimal.ZERO, BigDecimal.ZERO, new BigDecimal("2"));
     }
 
     @Test

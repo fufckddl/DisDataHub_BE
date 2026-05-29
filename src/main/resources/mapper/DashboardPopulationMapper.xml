@@ -13,30 +13,76 @@
                 eupmyeondong_code,
                 name,
                 full_name,
-                COALESCE(#{areaLevel}, level) AS selected_level
+                <choose>
+                    <when test="areaLevel == null or areaLevel == ''">
+                        level AS selected_level
+                    </when>
+                    <otherwise>
+                        CASE
+                            WHEN match_priority = 0
+                                 AND (
+                                     CASE level
+                                         WHEN 'SIDO' THEN 1
+                                         WHEN 'SIGUNGU' THEN 2
+                                         WHEN 'EUPMYEONDONG' THEN 3
+                                         WHEN 'JIPGYEGU' THEN 4
+                                         ELSE 0
+                                     END
+                                 ) > (
+                                     CASE #{areaLevel}
+                                         WHEN 'SIDO' THEN 1
+                                         WHEN 'SIGUNGU' THEN 2
+                                         WHEN 'EUPMYEONDONG' THEN 3
+                                         WHEN 'JIPGYEGU' THEN 4
+                                         ELSE 0
+                                     END
+                                 )
+                            THEN level
+                            ELSE #{areaLevel}
+                        END AS selected_level
+                    </otherwise>
+                </choose>
             FROM (
                 SELECT
                     c.*,
                     CASE
                         WHEN c.area_code = #{areaCode} THEN 0
+                        WHEN LENGTH(#{areaCode}) = 2
+                             AND c.level = 'SIDO'
+                             AND c.sido_code = #{areaCode} THEN 1
+                        WHEN LENGTH(#{areaCode}) = 10
+                             AND SUBSTRING(#{areaCode}, 3, 8) = '00000000'
+                             AND c.level = 'SIDO'
+                             AND c.sido_code = SUBSTRING(#{areaCode}, 1, 2) THEN 2
                         WHEN LENGTH(#{areaCode}) = 5
                              AND c.level = 'SIGUNGU'
-                             AND c.sigungu_code = #{areaCode} THEN 1
+                             AND c.sigungu_code = #{areaCode} THEN 3
                         WHEN LENGTH(#{areaCode}) = 10
                              AND SUBSTRING(#{areaCode}, 6, 5) = '00000'
                              AND c.level = 'SIGUNGU'
-                             AND c.sigungu_code = SUBSTRING(#{areaCode}, 1, 5) THEN 2
+                             AND c.sigungu_code = SUBSTRING(#{areaCode}, 1, 5) THEN 4
                         WHEN LENGTH(#{areaCode}) = 8
                              AND c.level = 'EUPMYEONDONG'
-                             AND c.eupmyeondong_code = #{areaCode} THEN 3
+                             AND c.eupmyeondong_code = #{areaCode} THEN 5
                         WHEN LENGTH(#{areaCode}) = 10
                              AND SUBSTRING(#{areaCode}, 9, 2) = '00'
                              AND c.level = 'EUPMYEONDONG'
-                             AND c.eupmyeondong_code = SUBSTRING(#{areaCode}, 1, 8) THEN 4
+                             AND c.eupmyeondong_code = SUBSTRING(#{areaCode}, 1, 8) THEN 6
                         ELSE 9
                     END AS match_priority
                 FROM public.sd_area_code c
                 WHERE c.area_code = #{areaCode}
+                   OR (
+                       LENGTH(#{areaCode}) = 2
+                       AND c.level = 'SIDO'
+                       AND c.sido_code = #{areaCode}
+                   )
+                   OR (
+                       LENGTH(#{areaCode}) = 10
+                       AND SUBSTRING(#{areaCode}, 3, 8) = '00000000'
+                       AND c.level = 'SIDO'
+                       AND c.sido_code = SUBSTRING(#{areaCode}, 1, 2)
+                   )
                    OR (
                        LENGTH(#{areaCode}) = 5
                        AND c.level = 'SIGUNGU'
@@ -65,198 +111,222 @@
             LIMIT 1
         ),
         scope_candidates AS (
-            SELECT c.area_code, 1 AS priority
-            FROM public.sd_area_code c
+            SELECT DISTINCT area_code, population_area_level, priority
+            FROM (
+                SELECT s.area_code, 'SIDO' AS population_area_level, 1 AS priority
+                FROM selected_area s
+                WHERE s.selected_level = 'SIDO'
+
+                UNION ALL
+
+                SELECT c.area_code, 'SIGUNGU' AS population_area_level, 2 AS priority
+                FROM public.sd_area_code c
+                CROSS JOIN selected_area s
+                WHERE s.selected_level = 'SIDO'
+                  AND c.level = 'SIGUNGU'
+                  AND c.sido_code = s.sido_code
+
+                UNION ALL
+
+                SELECT c.sigungu_code || '00000' AS area_code, 'SIGUNGU' AS population_area_level, 3 AS priority
+                FROM public.sd_area_code c
+                CROSS JOIN selected_area s
+                WHERE s.selected_level = 'SIDO'
+                  AND c.level = 'SIGUNGU'
+                  AND c.sido_code = s.sido_code
+                  AND c.sigungu_code IS NOT NULL
+                  AND c.sigungu_code != ''
+
+                UNION ALL
+
+                SELECT c.area_code, 'EUPMYEONDONG' AS population_area_level, 4 AS priority
+                FROM public.sd_area_code c
+                CROSS JOIN selected_area s
+                WHERE s.selected_level = 'SIDO'
+                  AND c.level = 'EUPMYEONDONG'
+                  AND c.sido_code = s.sido_code
+
+                UNION ALL
+
+                SELECT s.area_code, 'SIGUNGU' AS population_area_level, 1 AS priority
+                FROM selected_area s
+                WHERE s.selected_level = 'SIGUNGU'
+
+                UNION ALL
+
+                SELECT s.sigungu_code || '00000' AS area_code, 'SIGUNGU' AS population_area_level, 2 AS priority
+                FROM selected_area s
+                WHERE s.selected_level = 'SIGUNGU'
+                  AND s.sigungu_code IS NOT NULL
+                  AND s.sigungu_code != ''
+
+                UNION ALL
+
+                SELECT c.area_code, 'EUPMYEONDONG' AS population_area_level, 3 AS priority
+                FROM public.sd_area_code c
+                CROSS JOIN selected_area s
+                WHERE s.selected_level = 'SIGUNGU'
+                  AND c.level = 'EUPMYEONDONG'
+                  AND c.sido_code = s.sido_code
+                  AND c.sigungu_code = s.sigungu_code
+
+                UNION ALL
+
+                SELECT s.area_code, 'EUPMYEONDONG' AS population_area_level, 1 AS priority
+                FROM selected_area s
+                WHERE s.selected_level = 'EUPMYEONDONG'
+
+                UNION ALL
+
+                SELECT s.eupmyeondong_code || '00' AS area_code, 'EUPMYEONDONG' AS population_area_level, 2 AS priority
+                FROM selected_area s
+                WHERE s.selected_level = 'EUPMYEONDONG'
+                  AND s.eupmyeondong_code IS NOT NULL
+                  AND s.eupmyeondong_code != ''
+
+                UNION ALL
+
+                SELECT s.area_code, 'TONG_BAN' AS population_area_level, 3 AS priority
+                FROM selected_area s
+                WHERE s.selected_level = 'EUPMYEONDONG'
+
+                UNION ALL
+
+                SELECT c.area_code, 'EUPMYEONDONG' AS population_area_level, 1 AS priority
+                FROM public.sd_area_code c
+                CROSS JOIN selected_area s
+                WHERE s.selected_level = 'JIPGYEGU'
+                  AND c.level = 'EUPMYEONDONG'
+                  AND c.sido_code = s.sido_code
+                  AND c.sigungu_code = s.sigungu_code
+                  AND c.eupmyeondong_code = s.eupmyeondong_code
+
+                UNION ALL
+
+                SELECT c.eupmyeondong_code || '00' AS area_code, 'EUPMYEONDONG' AS population_area_level, 2 AS priority
+                FROM public.sd_area_code c
+                CROSS JOIN selected_area s
+                WHERE s.selected_level = 'JIPGYEGU'
+                  AND c.level = 'EUPMYEONDONG'
+                  AND c.sido_code = s.sido_code
+                  AND c.sigungu_code = s.sigungu_code
+                  AND c.eupmyeondong_code = s.eupmyeondong_code
+                  AND c.eupmyeondong_code IS NOT NULL
+                  AND c.eupmyeondong_code != ''
+
+                UNION ALL
+
+                SELECT c.area_code, 'TONG_BAN' AS population_area_level, 3 AS priority
+                FROM public.sd_area_code c
+                CROSS JOIN selected_area s
+                WHERE s.selected_level = 'JIPGYEGU'
+                  AND c.level = 'EUPMYEONDONG'
+                  AND c.sido_code = s.sido_code
+                  AND c.sigungu_code = s.sigungu_code
+                  AND c.eupmyeondong_code = s.eupmyeondong_code
+
+                UNION ALL
+
+                SELECT c.area_code, 'SIGUNGU' AS population_area_level, 4 AS priority
+                FROM public.sd_area_code c
+                CROSS JOIN selected_area s
+                WHERE s.selected_level = 'JIPGYEGU'
+                  AND c.level = 'SIGUNGU'
+                  AND c.sido_code = s.sido_code
+                  AND c.sigungu_code = s.sigungu_code
+            ) candidates
+            WHERE area_code IS NOT NULL
+              AND area_code != ''
+        ),
+        population_matches AS (
+            SELECT DISTINCT p.resident_population_id, sc.priority
+            FROM scope_candidates sc
+            JOIN public.sd_resident_population p
+                ON p.area_code = sc.area_code
+               AND p.area_level = sc.population_area_level
+            WHERE p.reg_se_cd = '1'
+            <if test="baseDate != null">
+                AND p.stats_ym = REPLACE(SUBSTRING(CAST(#{baseDate} AS varchar), 1, 7), '-', '')
+            </if>
+
+            UNION
+
+            SELECT DISTINCT p.resident_population_id, sc.priority
+            FROM scope_candidates sc
             CROSS JOIN selected_area s
-            WHERE s.selected_level = 'SIDO'
-              AND c.level = 'SIGUNGU'
-              AND c.sido_code = s.sido_code
-
-            UNION ALL
-
-            SELECT c.sigungu_code || '00000' AS area_code, 2 AS priority
-            FROM public.sd_area_code c
-            CROSS JOIN selected_area s
-            WHERE s.selected_level = 'SIDO'
-              AND c.level = 'SIGUNGU'
-              AND c.sido_code = s.sido_code
-              AND c.sigungu_code IS NOT NULL
-              AND c.sigungu_code != ''
-
-            UNION ALL
-
-            SELECT s.area_code, 1 AS priority
-            FROM selected_area s
-            WHERE s.selected_level = 'SIGUNGU'
-
-            UNION ALL
-
-            SELECT s.sigungu_code || '00000' AS area_code, 2 AS priority
-            FROM selected_area s
-            WHERE s.selected_level = 'SIGUNGU'
-              AND s.sigungu_code IS NOT NULL
-              AND s.sigungu_code != ''
-
-            UNION ALL
-
-            SELECT c.area_code, 3 AS priority
-            FROM public.sd_area_code c
-            CROSS JOIN selected_area s
-            WHERE s.selected_level = 'SIGUNGU'
-              AND c.level = 'EUPMYEONDONG'
-              AND c.sido_code = s.sido_code
-              AND c.sigungu_code = s.sigungu_code
-
-            UNION ALL
-
-            SELECT c.area_code, 3 AS priority
-            FROM public.sd_area_code c
-            CROSS JOIN selected_area s
-            WHERE s.selected_level = 'SIDO'
-              AND c.level = 'EUPMYEONDONG'
-              AND c.sido_code = s.sido_code
-
-            UNION ALL
-
-            SELECT s.area_code, 1 AS priority
-            FROM selected_area s
+            JOIN public.sd_area_admin_legal_mapping m
+                ON m.legal_area_code = sc.area_code
+               AND m.source_code = 'KOSIS_LEGAL_ADMIN_LINK'
+            JOIN public.sd_resident_population p
+                ON p.admm_cd = m.admin_area_code
+               AND p.area_level = sc.population_area_level
             WHERE s.selected_level = 'EUPMYEONDONG'
-
-            UNION ALL
-
-            SELECT s.eupmyeondong_code || '00' AS area_code, 2 AS priority
-            FROM selected_area s
-            WHERE s.selected_level = 'EUPMYEONDONG'
-              AND s.eupmyeondong_code IS NOT NULL
-              AND s.eupmyeondong_code != ''
-
-            UNION ALL
-
-            SELECT s.area_code, 1 AS priority
-            FROM selected_area s
-            WHERE s.selected_level = 'JIPGYEGU'
-
-            UNION ALL
-
-            SELECT c.area_code, 2 AS priority
-            FROM public.sd_area_code c
-            CROSS JOIN selected_area s
-            WHERE s.selected_level = 'JIPGYEGU'
-              AND c.level = 'EUPMYEONDONG'
-              AND c.sido_code = s.sido_code
-              AND c.sigungu_code = s.sigungu_code
-              AND c.eupmyeondong_code = s.eupmyeondong_code
-
-            UNION ALL
-
-            SELECT c.eupmyeondong_code || '00' AS area_code, 3 AS priority
-            FROM public.sd_area_code c
-            CROSS JOIN selected_area s
-            WHERE s.selected_level = 'JIPGYEGU'
-              AND c.level = 'EUPMYEONDONG'
-              AND c.sido_code = s.sido_code
-              AND c.sigungu_code = s.sigungu_code
-              AND c.eupmyeondong_code = s.eupmyeondong_code
-              AND c.eupmyeondong_code IS NOT NULL
-              AND c.eupmyeondong_code != ''
-
-            UNION ALL
-
-            SELECT c.area_code, 3 AS priority
-            FROM public.sd_area_code c
-            CROSS JOIN selected_area s
-            WHERE s.selected_level = 'EUPMYEONDONG'
-              AND c.level = 'SIGUNGU'
-              AND c.sido_code = s.sido_code
-              AND c.sigungu_code = s.sigungu_code
-
-            UNION ALL
-
-            SELECT c.area_code, 4 AS priority
-            FROM public.sd_area_code c
-            CROSS JOIN selected_area s
-            WHERE s.selected_level = 'JIPGYEGU'
-              AND c.level = 'SIGUNGU'
-              AND c.sido_code = s.sido_code
-              AND c.sigungu_code = s.sigungu_code
+              AND sc.population_area_level = 'EUPMYEONDONG'
+              AND p.reg_se_cd = '1'
+            <if test="baseDate != null">
+                AND p.stats_ym = REPLACE(SUBSTRING(CAST(#{baseDate} AS varchar), 1, 7), '-', '')
+            </if>
         ),
         available_priority AS (
-            SELECT MIN(sc.priority) AS priority
-            FROM scope_candidates sc
-            JOIN public.sd_area_population p
-                ON p.area_code = sc.area_code
-            WHERE 1 = 1
-            <if test="baseDate != null">
-                AND p.base_date = #{baseDate}
-            </if>
-            <if test="hour != null and hour != ''">
-                AND p.hour = #{hour}
-            </if>
+            SELECT MIN(pm.priority) AS priority
+            FROM population_matches pm
+        ),
+        latest_stats AS (
+            SELECT MAX(p.stats_ym) AS stats_ym
+            FROM public.sd_resident_population p
+            JOIN population_matches pm
+                ON pm.resident_population_id = p.resident_population_id
+            JOIN available_priority ap
+                ON ap.priority = pm.priority
         ),
         filtered_population AS (
-            SELECT p.*
-            FROM public.sd_area_population p
-            JOIN scope_candidates sc
-                ON sc.area_code = p.area_code
+            SELECT DISTINCT p.*
+            FROM public.sd_resident_population p
+            JOIN population_matches pm
+                ON pm.resident_population_id = p.resident_population_id
             JOIN available_priority ap
-                ON ap.priority = sc.priority
-            WHERE 1 = 1
-            <if test="baseDate != null">
-                AND p.base_date = #{baseDate}
-            </if>
-            <if test="hour != null and hour != ''">
-                AND p.hour = #{hour}
-            </if>
-        ),
-        latest_population AS (
-            SELECT DISTINCT ON (p.area_code)
-                p.*
-            FROM filtered_population p
-            ORDER BY p.area_code, p.base_date DESC, p.hour DESC, p.population_id DESC
+                ON ap.priority = pm.priority
+            JOIN latest_stats ls
+                ON ls.stats_ym = p.stats_ym
+            WHERE p.reg_se_cd = '1'
         )
         SELECT
-            MIN(p.population_id) AS population_id,
+            MIN(p.resident_population_id) AS population_id,
             s.area_code,
             s.name AS area_name,
             s.full_name,
-            STRING_AGG(DISTINCT p.source_code, ',') AS source_code,
-            MAX(p.base_date) AS base_date,
-            MAX(p.hour) AS hour,
+            'MOIS_ADMM_SEXD_AGE_PPLTN' AS source_code,
+            CAST(SUBSTRING(MAX(p.stats_ym), 1, 4) || '-' || SUBSTRING(MAX(p.stats_ym), 5, 2) || '-01' AS date) AS base_date,
+            '00' AS hour,
             SUM(p.total_population) AS total_population,
             SUM(p.male_population) AS male_population,
             SUM(p.female_population) AS female_population,
             SUM(p.male_0_9) AS male0To9,
-            SUM(p.male_10_14) AS male10To14,
-            SUM(p.male_15_19) AS male15To19,
-            SUM(p.male_20_24) AS male20To24,
-            SUM(p.male_25_29) AS male25To29,
-            SUM(p.male_30_34) AS male30To34,
-            SUM(p.male_35_39) AS male35To39,
-            SUM(p.male_40_44) AS male40To44,
-            SUM(p.male_45_49) AS male45To49,
-            SUM(p.male_50_54) AS male50To54,
-            SUM(p.male_55_59) AS male55To59,
-            SUM(p.male_60_64) AS male60To64,
-            SUM(p.male_65_69) AS male65To69,
-            SUM(p.male_70_74) AS male70To74,
+            SUM(p.male_10_19) AS male10To19,
+            SUM(p.male_20_29) AS male20To29,
+            SUM(p.male_30_39) AS male30To39,
+            SUM(p.male_40_49) AS male40To49,
+            SUM(p.male_50_59) AS male50To59,
+            SUM(p.male_60_69) AS male60To69,
+            SUM(p.male_70_79) AS male70To79,
+            SUM(p.male_80_89) AS male80To89,
+            SUM(p.male_90_99) AS male90To99,
+            SUM(p.male_100_over) AS male100Over,
             SUM(p.female_0_9) AS female0To9,
-            SUM(p.female_10_14) AS female10To14,
-            SUM(p.female_15_19) AS female15To19,
-            SUM(p.female_20_24) AS female20To24,
-            SUM(p.female_25_29) AS female25To29,
-            SUM(p.female_30_34) AS female30To34,
-            SUM(p.female_35_39) AS female35To39,
-            SUM(p.female_40_44) AS female40To44,
-            SUM(p.female_45_49) AS female45To49,
-            SUM(p.female_50_54) AS female50To54,
-            SUM(p.female_55_59) AS female55To59,
-            SUM(p.female_60_64) AS female60To64,
-            SUM(p.female_65_69) AS female65To69,
-            SUM(p.female_70_74) AS female70To74,
+            SUM(p.female_10_19) AS female10To19,
+            SUM(p.female_20_29) AS female20To29,
+            SUM(p.female_30_39) AS female30To39,
+            SUM(p.female_40_49) AS female40To49,
+            SUM(p.female_50_59) AS female50To59,
+            SUM(p.female_60_69) AS female60To69,
+            SUM(p.female_70_79) AS female70To79,
+            SUM(p.female_80_89) AS female80To89,
+            SUM(p.female_90_99) AS female90To99,
+            SUM(p.female_100_over) AS female100Over,
             MAX(CAST(p.metadata AS varchar)) AS metadata,
             MAX(p.created_at) AS created_at,
             MAX(p.updated_at) AS updated_at
-        FROM latest_population p
+        FROM filtered_population p
         CROSS JOIN selected_area s
         GROUP BY s.area_code, s.name, s.full_name
     </select>
