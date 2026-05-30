@@ -63,6 +63,8 @@ public interface DatasetDownloadMapper {
     public String findUserOrganization(Integer userId);
 
 
+    //  공간 데이터 갖고오기
+    public String findDatasetPreviewGeoJson(Long datasetId);
     
     
     

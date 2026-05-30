@@ -45,10 +45,11 @@ public class DatasetDownloadService {
         viewLogDto.setDatasetId(datasetId);
         viewLogDto.setUserId(userId);
         viewLogDto.setViewIp(viewIp);
-        
+
+        // 조회 로그 생성, 조회 수 증가
         recordDatasetView(viewLogDto);
 
-        // datasetDownloadMapper.increaseViewCount(datasetId);
+        
         DatasetStatDto stats = datasetDownloadMapper.findDatasetStatById(datasetId);
         if (stats == null) {
             stats = new DatasetStatDto();
@@ -134,5 +135,21 @@ public class DatasetDownloadService {
         if(!userOrganization.equals(uploderOrganization)) result = false;
 
         return result;
+    }
+
+    //  공간 데이터 갖고오기
+    public String getDatasetPreviewGeoJson(Long datasetId, Integer userId){
+        DownloadDatasetDetailDto datasetDto = datasetDownloadMapper.findDatasetDetailById(datasetId);
+
+        if(datasetDto == null){
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "데이터셋을 찾을 수 없습니다.");
+        }
+
+        validateDatasetDetailAccess(datasetDto, userId);
+
+        String geoJson = datasetDownloadMapper.findDatasetPreviewGeoJson(datasetId);
+        
+        // 지도 데이터 없으면 빈 FeatureCollection 반환
+        return geoJson != null ? geoJson : "{\"type\":\"FeatureCollection\",\"features\":[]}";
     }
 }

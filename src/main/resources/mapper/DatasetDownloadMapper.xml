@@ -24,6 +24,7 @@
         order by d.approved_at desc, d.created_at desc;
     </select>
 
+<!-- 상세 정보 -->
     <select id="findDatasetDetailById"
             parameterType="java.lang.Long"
             resultType="com.hub.gisdatahub.download.dto.DownloadDatasetDetailDto">
@@ -38,7 +39,7 @@
             original_srid,
             storage_srid,
             analysis_srid,
-            is_spatial as spatial,
+            is_spatial,
             is_public,
             status,
             created_at,
@@ -173,5 +174,33 @@
         select organization  from sd_user
         where user_id = #{userId};
     </select>
+
+
+<!-- GeoJSON 공간 데이터 갖고오기  -->
+    <select id="findDatasetPreviewGeoJson"
+            parameterType="java.lang.Long"
+            resultType="java.lang.String">
+        with features as (
+            select jsonb_build_object(
+                'type', 'Feature',
+                'geometry', ST_AsGeoJSON(ST_MakeValid(f.geom_4326), 5)::jsonb,
+                'properties', jsonb_build_object(
+                    'featureId', f.feature_id,
+                    'name', f.feature_name,
+                    'spatialType', f.spatial_type
+                )
+            ) as feature
+            from sd_gis_feature f
+            where f.dataset_id = #{datasetId}
+            order by f.feature_id
+            limit 200
+        )
+        select jsonb_build_object(
+            'type', 'FeatureCollection',
+            'features', coalesce(jsonb_agg(feature), '[]'::jsonb)
+        )::text
+        from features
+    </select>
+
 
 </mapper>
