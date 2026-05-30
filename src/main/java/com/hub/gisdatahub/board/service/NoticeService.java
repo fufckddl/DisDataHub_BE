@@ -12,4 +12,8 @@ public interface NoticeService {
     public void createNoticePost(BoardPostDto boardPostDto);
 
     public List<BoardPostDto> getAdminNoticeList();
+
+    public BoardPostDto getAdminNoticeDetailData(Long postId);
+
+    public void updateNoticePost(Long postId, BoardPostDto boardPostDto);
 }

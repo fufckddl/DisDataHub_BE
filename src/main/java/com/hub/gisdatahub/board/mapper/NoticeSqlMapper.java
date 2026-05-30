@@ -18,5 +18,10 @@ public interface NoticeSqlMapper {
     public void insertNotice(BoardPostDto boardPostDto);
     // 관리자 페이지 공지사항 리스트
     public List<BoardPostDto> findAdminNoticeList();
+    // 관리자 공지사항 상세 페이지
+    public BoardPostDto findByAdminDetailPage(Long postId);
+
+    // 수정기능
+    public int updateNoticePost(BoardPostDto boardPostDto);
 }
 

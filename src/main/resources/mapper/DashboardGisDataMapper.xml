@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.hub.gisdatahub.dashboard.mapper.DashboardGisDataMapper">
+
+    <insert id="upsertDataSource" parameterType="com.hub.gisdatahub.dashboard.dto.DashboardGisDataSourceSeed">
+        INSERT INTO public.sd_dashboard_data_source (
+            source_code,
+            source_name,
+            provider_name,
+            provider_type,
+            source_category,
+            official_url,
+            api_endpoint,
+            api_type,
+            data_format,
+            auth_type,
+            spatial_coverage,
+            spatial_granularity,
+            temporal_granularity,
+            update_cycle,
+            coordinate_system,
+            has_geometry,
+            has_point_coordinate,
+            collection_difficulty,
+            priority,
+            license_note,
+            quota_note,
+            retention_days,
+            verification_status,
+            verification_note,
+            metadata,
+            is_active,
+            updated_at
+        ) VALUES (
+            #{sourceCode},
+            #{sourceName},
+            #{providerName},
+            #{providerType},
+            #{sourceCategory},
+            #{officialUrl},
+            #{apiEndpoint},
+            #{apiType},
+            #{dataFormat},
+            #{authType},
+            #{spatialCoverage},
+            #{spatialGranularity},
+            #{temporalGranularity},
+            #{updateCycle},
+            #{coordinateSystem},
+            #{hasGeometry},
+            #{hasPointCoordinate},
+            #{collectionDifficulty},
+            #{priority},
+            #{licenseNote},
+            #{quotaNote},
+            #{retentionDays},
+            #{verificationStatus},
+            #{verificationNote},
+            CAST(#{metadata} AS jsonb),
+            TRUE,
+            CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (source_code) DO UPDATE SET
+            source_name = EXCLUDED.source_name,
+            provider_name = EXCLUDED.provider_name,
+            provider_type = EXCLUDED.provider_type,
+            source_category = EXCLUDED.source_category,
+            official_url = EXCLUDED.official_url,
+            api_endpoint = EXCLUDED.api_endpoint,
+            api_type = EXCLUDED.api_type,
+            data_format = EXCLUDED.data_format,
+            auth_type = EXCLUDED.auth_type,
+            spatial_coverage = EXCLUDED.spatial_coverage,
+            spatial_granularity = EXCLUDED.spatial_granularity,
+            temporal_granularity = EXCLUDED.temporal_granularity,
+            update_cycle = EXCLUDED.update_cycle,
+            coordinate_system = EXCLUDED.coordinate_system,
+            has_geometry = EXCLUDED.has_geometry,
+            has_point_coordinate = EXCLUDED.has_point_coordinate,
+            collection_difficulty = EXCLUDED.collection_difficulty,
+            priority = EXCLUDED.priority,
+            license_note = EXCLUDED.license_note,
+            quota_note = EXCLUDED.quota_note,
+            retention_days = EXCLUDED.retention_days,
+            verification_status = EXCLUDED.verification_status,
+            verification_note = EXCLUDED.verification_note,
+            metadata = EXCLUDED.metadata,
+            is_active = TRUE,
+            updated_at = CURRENT_TIMESTAMP
+    </insert>
+
+    <insert id="upsertDataset" parameterType="com.hub.gisdatahub.dashboard.dto.DashboardGisDatasetSeed">
+        INSERT INTO public.sd_dashboard_dataset (
+            source_code,
+            dataset_code,
+            dataset_name,
+            dashboard_layer_type,
+            dashboard_metric_hint,
+            default_geometry_type,
+            default_area_level,
+            spatial_join_strategy,
+            collection_policy,
+            display_priority,
+            is_initial_candidate,
+            metadata,
+            updated_at
+        ) VALUES (
+            #{sourceCode},
+            #{datasetCode},
+            #{datasetName},
+            #{dashboardLayerType},
+            #{dashboardMetricHint},
+            #{defaultGeometryType},
+            #{defaultAreaLevel},
+            #{spatialJoinStrategy},
+            #{collectionPolicy},
+            #{displayPriority},
+            #{isInitialCandidate},
+            CAST(#{metadata} AS jsonb),
+            CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (dataset_code) DO UPDATE SET
+            source_code = EXCLUDED.source_code,
+            dataset_name = EXCLUDED.dataset_name,
+            dashboard_layer_type = EXCLUDED.dashboard_layer_type,
+            dashboard_metric_hint = EXCLUDED.dashboard_metric_hint,
+            default_geometry_type = EXCLUDED.default_geometry_type,
+            default_area_level = EXCLUDED.default_area_level,
+            spatial_join_strategy = EXCLUDED.spatial_join_strategy,
+            collection_policy = EXCLUDED.collection_policy,
+            display_priority = EXCLUDED.display_priority,
+            is_initial_candidate = EXCLUDED.is_initial_candidate,
+            metadata = EXCLUDED.metadata,
+            updated_at = CURRENT_TIMESTAMP
+    </insert>
+
+    <insert id="upsertMetric" parameterType="com.hub.gisdatahub.dashboard.dto.DashboardGisMetricSeed">
+        INSERT INTO public.sd_dashboard_metric (
+            dataset_code,
+            metric_code,
+            metric_name,
+            value_type,
+            unit,
+            chart_group,
+            sort_order,
+            is_default,
+            metadata,
+            updated_at
+        ) VALUES (
+            #{datasetCode},
+            #{metricCode},
+            #{metricName},
+            #{valueType},
+            #{unit},
+            #{chartGroup},
+            #{sortOrder},
+            #{isDefault},
+            CAST(#{metadata} AS jsonb),
+            CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (dataset_code, metric_code) DO UPDATE SET
+            metric_name = EXCLUDED.metric_name,
+            value_type = EXCLUDED.value_type,
+            unit = EXCLUDED.unit,
+            chart_group = EXCLUDED.chart_group,
+            sort_order = EXCLUDED.sort_order,
+            is_default = EXCLUDED.is_default,
+            metadata = EXCLUDED.metadata,
+            updated_at = CURRENT_TIMESTAMP
+    </insert>
+
+</mapper>

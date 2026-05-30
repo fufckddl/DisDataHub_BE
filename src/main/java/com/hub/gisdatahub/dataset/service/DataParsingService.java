@@ -18,6 +18,8 @@ import com.hub.gisdatahub.dataset.dto.TempFeatureDto;
 import com.hub.gisdatahub.dataset.mapper.DatasetMapper;
 import com.opencsv.CSVReader;
 import org.apache.poi.ss.usermodel.*;
+import com.fasterxml.jackson.databind.JsonNode;
+import java.util.Iterator;
 
 @Service
 public class DataParsingService {
@@ -177,14 +179,147 @@ public class DataParsingService {
             e.printStackTrace();
             throw new RuntimeException("CSV 파싱 중 에러 발생: " + e.getMessage());
         }
-
-
     }
 
     private int parseGeoJsonData(File file, DatasetUploadDto dto) {
-        // TODO: 여기서 GeoJSON 구조를 뜯어서 변환!
-        System.out.println("(공사 중) GeoJSON 파일을 뜯어보는 중입니다... 파일명: " + file.getName());
-        return 0;
+        System.out.println("GeoJSON 파싱 프로세스를 시작합니다. (스마트 이름 추출 및 WKT 자동 조립 모드)");
+        List<TempFeatureDto> featureList = new ArrayList<>();
+
+        try {
+            // 1. 파일을 통째로 읽어 안전한 트리(JsonNode) 구조로 변환합니다.
+            JsonNode rootNode = objectMapper.readTree(file);
+            JsonNode features = rootNode.path("features");
+
+            // 방어막 1: GeoJSON 국제 표준(FeatureCollection) 규격인지 확인
+            if (features.isMissingNode() || !features.isArray()) {
+                throw new IllegalArgumentException("올바른 GeoJSON 규격이 아닙니다. 'features' 배열을 찾을 수 없습니다.");
+            }
+
+            int rowIndex = 1; // GeoJSON은 물리적인 줄 번호가 없으므로 1부터 카운트 (에러 오답 노트용)
+
+            // 2. 데이터(feature) 덩어리를 하나씩 순회하며 파싱
+            for (JsonNode featureNode : features) {
+                TempFeatureDto feature = new TempFeatureDto();
+                feature.setUploadId(dto.getUploadId());
+                feature.setRowNumber(rowIndex++);
+                feature.setValidationStatus("PENDING");
+
+                JsonNode properties = featureNode.path("properties");
+                JsonNode geometry = featureNode.path("geometry");
+
+                // [타겟 1] Properties: 스마트 이름 추출 및 JSON 압축
+                if (!properties.isMissingNode() && properties.isObject()) {
+                    String extractedName = null;
+                    String firstKey = null;
+
+                    // properties 안의 모든 Key를 스캔
+                    Iterator<String> fieldNames = properties.fieldNames();
+                    while (fieldNames.hasNext()) {
+                        String key = fieldNames.next();
+                        if (firstKey == null) firstKey = key; // 만약을 대비해 첫 번째 Key를 기억해 둡니다.
+
+                        // '이름' 냄새가 나는 Key를 발견하면 즉시 확보
+                        String lowerKey = key.toLowerCase();
+                        if (lowerKey.contains("name") || lowerKey.contains("명") || lowerKey.contains("이름")) {
+                            extractedName = properties.get(key).asText();
+                            break; 
+                        }
+                    }
+
+                    // 이름과 관련된 Key가 없었다면, 기본적으로 첫 번째 Key의 값을 사용합니다.
+                    if (extractedName == null && firstKey != null) {
+                        extractedName = properties.get(firstKey).asText();
+                    }
+
+                    // 속성 정보가 아예 비어있으면 null, 아니면 추출한 이름 세팅
+                    feature.setFeatureName(extractedName != null && !extractedName.trim().isEmpty() ? extractedName.trim() : null);
+                    
+                    // 나머지 모든 속성들은 원래 JSON 모양 그대로 rawData에 쑤셔 넣습니다!
+                    feature.setRawData(properties.toString());
+                }
+
+                // [타겟 2] Geometry: 공간 타입 추출 및 WKT 강제 조립
+                if (!geometry.isMissingNode() && geometry.isObject()) {
+                    // GeoJSON의 공간 타입(Point, Polygon 등)을 무조건 대문자로 추출
+                    String geoType = geometry.path("type").asText().toUpperCase(); 
+                    JsonNode coordinates = geometry.path("coordinates");
+                    
+                    feature.setSpatialType(geoType);
+                    
+                    // 배열 형태의 좌표 [127, 37]를 -> "POINT(127 37)" 문자열로 강제 변환
+                    String wkt = convertCoordinatesToWkt(geoType, coordinates);
+                    feature.setRawWkt(wkt);
+                } else {
+                    // geometry 방이 아예 없으면 rawWkt는 null이 되고, 이후 DB Mapper에서 "공간 데이터 누락" 에러로 자동 적발됩니다.
+                    feature.setRawWkt(null);
+                    feature.setSpatialType(null);
+                }
+
+                featureList.add(feature);
+            }
+
+            // ==========================================
+            // [마무리] DB 일괄 저장 (Bulk Insert)
+            // ==========================================
+            if (!featureList.isEmpty()) {
+                datasetMapper.bulkInsertTempFeatures(featureList);
+                datasetMapper.updateUploadStatusToProcessing(dto.getUploadId(), featureList.size());
+            }
+
+            System.out.println("GeoJSON 데이터 " + featureList.size() + "개 파싱 완료 및 Bulk Insert 성공!");
+            return featureList.size();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new RuntimeException("GeoJSON 파싱 중 에러 발생: " + e.getMessage());
+        }
+    }
+
+    // GeoJSON 배열 좌표를 ➔ WKT 텍스트로 변환
+    private String convertCoordinatesToWkt(String type, JsonNode coords) {
+        // 좌표 배열이 정상이 아니면 null 반환 (DB 검증에서 INVALID_GEOMETRY로 잡아냄)
+        if (coords.isMissingNode() || !coords.isArray()) return null;
+
+        StringBuilder wkt = new StringBuilder(type); // 예: POINT, LINESTRING, POLYGON
+        
+        try {
+            if ("POINT".equals(type)) {
+                // POINT(127.123 37.123)
+                wkt.append("(").append(coords.get(0).asText()).append(" ").append(coords.get(1).asText()).append(")");
+            
+            } else if ("LINESTRING".equals(type)) {
+                // LINESTRING(127 37, 128 38)
+                wkt.append("(");
+                for (int i = 0; i < coords.size(); i++) {
+                    JsonNode pt = coords.get(i);
+                    wkt.append(pt.get(0).asText()).append(" ").append(pt.get(1).asText());
+                    if (i < coords.size() - 1) wkt.append(", ");
+                }
+                wkt.append(")");
+            
+            } else if ("POLYGON".equals(type)) {
+                // POLYGON((127 37, 128 38, ...)) ➔ GeoJSON은 다중 링(구멍 뚫린 폴리곤)을 지원하므로 반복문을 이중으로 돕니다.
+                wkt.append("(");
+                for (int i = 0; i < coords.size(); i++) {
+                    JsonNode ring = coords.get(i);
+                    wkt.append("(");
+                    for (int j = 0; j < ring.size(); j++) {
+                        JsonNode pt = ring.get(j);
+                        wkt.append(pt.get(0).asText()).append(" ").append(pt.get(1).asText());
+                        if (j < ring.size() - 1) wkt.append(", ");
+                    }
+                    wkt.append(")");
+                    if (i < coords.size() - 1) wkt.append(", ");
+                }
+                wkt.append(")");
+            } else {
+                return null; // POINT, LINESTRING, POLYGON 외의 값(MultiPolygon 등)은 현재 처리하지 않고 null 반환
+            }
+            return wkt.toString();
+        } catch (Exception e) {
+            // 좌표 배열 안에 숫자가 없거나 구조가 깨진 경우 조용히 null을 반환하여, Mapper의 '형태 불량' 검증에 걸리게 유도합니다.
+            return null; 
+        }
     }
 
     private int parseExcelData(File file, DatasetUploadDto dto) {
