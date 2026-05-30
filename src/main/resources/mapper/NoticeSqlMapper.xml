@@ -105,4 +105,18 @@
             AND board_type_code = 'NOTICE'
             AND deleted_yn = 'N'
     </select>
+
+    <update id="updateNoticePost"
+            parameterType="com.hub.gisdatahub.board.dto.BoardPostDto">
+        UPDATE sd_board_post
+        SET
+            title = #{title},
+            content = #{content},
+            visibility_status = #{visibilityStatus},
+            pinned_yn = #{pinnedYn},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE post_id = #{postId}
+            AND board_type_code = 'NOTICE'
+            AND deleted_yn = 'N'
+    </update>
 </mapper>

@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -79,6 +80,16 @@ public class NoticeController {
         response.put("adminNoticeDetail", adminNoticeDetail);
         response.put("result", "success");
 
+        return response;
+    }
+
+    @PutMapping("{postId}")
+    public Map<String, Object> updateNoticePost(@PathVariable("postId") Long postId, @RequestBody BoardPostDto boardPostDto) {
+        Map<String, Object> response = new HashMap<>();
+
+        noticeService.updateNoticePost(postId, boardPostDto);
+
+        response.put("result", "success");
         return response;
     }
 }
