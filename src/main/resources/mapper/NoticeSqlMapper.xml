@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
 <mapper namespace="com.hub.gisdatahub.board.mapper.NoticeSqlMapper">
 
-    <select id="findByNoticeList" resultType="com.hub.gisdatahub.board.dto.BoardPostDto">
-        SELECT 
+    <!-- 사용자 공지사항 목록 조회 -->
+    <select id="findByNoticeList"
+            resultType="com.hub.gisdatahub.board.dto.BoardPostDto">
+        SELECT
             post_id,
             board_type_code,
             user_id,
@@ -15,14 +20,18 @@
             view_count,
             updated_at,
             deleted_yn
-        FROM sd_board_post 
+        FROM sd_board_post
         WHERE board_type_code = 'NOTICE'
-            AND deleted_yn = 'N'
+          AND visibility_status = 'PUBLIC'
+          AND deleted_yn = 'N'
         ORDER BY pinned_yn DESC, created_at DESC
     </select>
 
-    <select id="findByNoticeDetailData">
-        SELECT 
+    <!-- 사용자 공지사항 상세 조회 -->
+    <select id="findByNoticeDetailData"
+            parameterType="long"
+            resultType="com.hub.gisdatahub.board.dto.BoardPostDto">
+        SELECT
             post_id,
             board_type_code,
             user_id,
@@ -34,12 +43,25 @@
             view_count,
             updated_at,
             deleted_yn
-        FROM sd_board_post 
-        WHERE post_id = {postId}
-            AND board_type_code = 'NOTICE'
-            AND deleted_yn = 'N'
+        FROM sd_board_post
+        WHERE post_id = #{postId}
+          AND board_type_code = 'NOTICE'
+          AND visibility_status = 'PUBLIC'
+          AND deleted_yn = 'N'
     </select>
 
+    <!-- 사용자 공지사항 상세 조회 시 조회수 증가 -->
+    <update id="increaseNoticeViewCount"
+            parameterType="long">
+        UPDATE sd_board_post
+        SET view_count = view_count + 1
+        WHERE post_id = #{postId}
+          AND board_type_code = 'NOTICE'
+          AND visibility_status = 'PUBLIC'
+          AND deleted_yn = 'N'
+    </update>
+
+    <!-- 공지사항 작성 -->
     <insert id="insertNotice"
             parameterType="com.hub.gisdatahub.board.dto.BoardPostDto"
             useGeneratedKeys="true"
@@ -63,7 +85,7 @@
         )
     </insert>
 
-    <!-- 관리자 공지사항 조회 커리 -->
+    <!-- 관리자 공지사항 목록 조회 -->
     <select id="findAdminNoticeList"
             resultType="com.hub.gisdatahub.board.dto.BoardPostDto">
         SELECT
@@ -80,14 +102,16 @@
             deleted_yn
         FROM sd_board_post
         WHERE board_type_code = 'NOTICE'
-            AND deleted_yn = 'N'
-        ORDER BY pinned_yn DESC, created_at DESC
+        ORDER BY
+            deleted_yn ASC,
+            pinned_yn DESC,
+            created_at DESC
     </select>
-    
+
+    <!-- 관리자 공지사항 상세 조회 -->
     <select id="findByAdminDetailPage"
-        parameterType="long"
-        resultType="com.hub.gisdatahub.board.dto.BoardPostDto"
-        >
+            parameterType="long"
+            resultType="com.hub.gisdatahub.board.dto.BoardPostDto">
         SELECT
             post_id,
             board_type_code,
@@ -102,10 +126,10 @@
             deleted_yn
         FROM sd_board_post
         WHERE post_id = #{postId}
-            AND board_type_code = 'NOTICE'
-            AND deleted_yn = 'N'
+          AND board_type_code = 'NOTICE'
     </select>
 
+    <!-- 공지사항 수정 -->
     <update id="updateNoticePost"
             parameterType="com.hub.gisdatahub.board.dto.BoardPostDto">
         UPDATE sd_board_post
@@ -116,17 +140,20 @@
             pinned_yn = #{pinnedYn},
             updated_at = CURRENT_TIMESTAMP
         WHERE post_id = #{postId}
-            AND board_type_code = 'NOTICE'
-            AND deleted_yn = 'N'
+          AND board_type_code = 'NOTICE'
+          AND deleted_yn = 'N'
     </update>
 
-    <update id="deleteNoticePost" parameterType="long">
-        DELETE sd_board_post
+    <!-- 공지사항 삭제: 실제 삭제가 아니라 소프트 삭제 -->
+    <update id="deleteNoticePost"
+            parameterType="long">
+        UPDATE sd_board_post
         SET
             deleted_yn = 'Y',
             updated_at = CURRENT_TIMESTAMP
         WHERE post_id = #{postId}
-            AND board_type_code = 'NOTICE'
-            AND delete_yn = 'N'
+          AND board_type_code = 'NOTICE'
+          AND deleted_yn = 'N'
     </update>
+
 </mapper>

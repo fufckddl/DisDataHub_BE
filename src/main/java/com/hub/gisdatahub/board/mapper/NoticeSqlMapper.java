@@ -24,5 +24,7 @@ public interface NoticeSqlMapper {
     public int updateNoticePost(BoardPostDto boardPostDto);
     // 삭제기능
     public int deleteNoticePost(Long postId);
+    // 조회수 증가
+    public int increaseNoticeViewCount(Long postId);
 }
 
