@@ -53,6 +53,30 @@ public class DataParsingService {
     public int parseAndBulkInsert(DatasetUploadDto dto) throws Exception {
         System.out.println("[파싱 전담반] 파일 확장자 판별 및 데이터 추출을 시작합니다.");
 
+        long maxSizeBytes = 2L * 1024 * 1024 * 1024;
+
+        if (dto.getFileSize() > maxSizeBytes) {
+
+            String errorMessage = "파일 용량 제한(2GB)을 초과했습니다. (현재 크기: " + (dto.getFileSize() / 1024 / 1024) + "MB)";
+            System.err.println("🚨 [백엔드 용량 초과 차단] " + errorMessage);
+
+            // 1. sd_upload_log 에러 상태 기록 (파일 1개 차단이므로 errorCount는 1)
+            validationMapper.updateLogValidationFailed(dto.getUploadId(), 1);
+
+            // 2. 파일 메타데이터(sd_gis_dataset_file) 경로 초기화 (빈 문자열)
+            validationMapper.clearDatasetFilePath(dto.getDatasetId());
+
+            // 3. 부모 테이블(sd_gis_dataset) 최종 상태 INVALID 처리
+            validationMapper.updateDatasetStatusToInvalid(dto.getDatasetId());
+
+            // 4. 하드디스크 용량 확보! 불량 물리 파일 즉시 영구 파기 (OS 레벨)
+            fileUploadService.deleteTempFile(dto.getStoredFilename());
+            System.out.println("🗑️ [하드 롤백] 2GB 초과 물리 파일 삭제 완료.");
+
+            // 5. DB 롤백 방지용 예외 투척! (이 예외를 던지면 DB는 커밋되고 프론트로 에러가 예쁘게 날아갑니다)
+            throw new ValidationFailedException(errorMessage, dto.getUploadId());
+        }
+
         // 1. DTO에 담긴 정보로 하드디스크에 저장된 진짜 파일 객체 찾기
         File physicalFile = new File(tempRootPath + dto.getStoredFilename());
 
@@ -78,6 +102,11 @@ public class DataParsingService {
             case ".shp":
                 System.out.println("SHP(ZIP) 파일 스캔 및 프리패스 프로세스로 이동합니다.");
                 return checkShapefileZip(physicalFile, dto);
+
+            case ".tif":
+            case ".tiff":
+                System.out.println("TIFF 파일 확인. 프리패스 프로세스로 이동합니다.");
+                return processTiffPass(dto);
 
             default:
                 throw new IllegalArgumentException("지원하지 않는 데이터 파일 형식입니다: " + extension);
@@ -529,5 +558,15 @@ public class DataParsingService {
                 // 이 예외는 @Transactional(noRollbackFor)에 등록되어 있어서 DB 롤백을 막아줍니다.
                 throw new ValidationFailedException(errorMessage, dto.getUploadId());
             }
+    }
+
+    private int processTiffPass(DatasetUploadDto dto) {
+        System.out.println("[TIFF 프리패스] 공간 데이터 파싱 및 검증 생략. 승인 대기(REQUEST) 상태로 직행합니다.");
+
+        // 프리패스 전용 상태 업데이트 쿼리 실행
+        datasetMapper.updateLogForDirectPass(dto.getUploadId());
+        validationMapper.updateDatasetStatusToRequest(dto.getDatasetId());
+
+        return 0;
     }
 }
