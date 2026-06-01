@@ -60,4 +60,13 @@ public class NoticeServiceImpl implements NoticeService {
 
         noticeSqlMapper.updateNoticePost(boardPostDto);
     }
+
+    @Override
+    public void deleteNoticePost(Long postId) {
+        int deleteCount = noticeSqlMapper.deleteNoticePost(postId);
+
+        if (deleteCount == 0) {
+            throw new RuntimeException("삭제할 공지사항을 찾을 수 없습니다.");
+        }
+    }
 }
