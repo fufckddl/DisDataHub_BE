@@ -119,4 +119,14 @@
             AND board_type_code = 'NOTICE'
             AND deleted_yn = 'N'
     </update>
+
+    <update id="deleteNoticePost" parameterType="long">
+        DELETE sd_board_post
+        SET
+            deleted_yn = 'Y',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE post_id = #{postId}
+            AND board_type_code = 'NOTICE'
+            AND delete_yn = 'N'
+    </update>
 </mapper>
