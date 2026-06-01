@@ -344,4 +344,12 @@
         AND d.status IN ('REQUEST', 'APPROVED', 'REJECTED')
         ORDER BY d.created_at DESC
     </select>
+
+    <update id="updateLogForDirectPass" parameterType="long">
+        UPDATE sd_upload_log
+        SET upload_status = 'COMPLETED',
+            validation_status = 'SUCCESS',
+            success_count = 0
+        WHERE upload_id = #{uploadId}
+    </update>
 </mapper>

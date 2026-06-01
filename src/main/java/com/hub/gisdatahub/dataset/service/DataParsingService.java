@@ -15,11 +15,21 @@ import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hub.gisdatahub.dataset.dto.DatasetUploadDto;
 import com.hub.gisdatahub.dataset.dto.TempFeatureDto;
+import com.hub.gisdatahub.dataset.exception.ValidationFailedException;
 import com.hub.gisdatahub.dataset.mapper.DatasetMapper;
+import com.hub.gisdatahub.dataset.mapper.ValidationMapper;
 import com.opencsv.CSVReader;
 import org.apache.poi.ss.usermodel.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.Iterator;
+
+import java.io.FileInputStream;
+import java.nio.charset.Charset;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 @Service
 public class DataParsingService {
@@ -30,6 +40,12 @@ public class DataParsingService {
 
     @Autowired
     private DatasetMapper datasetMapper;
+
+    @Autowired
+    private ValidationMapper validationMapper;
+
+    @Autowired
+    private FileUploadService fileUploadService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -57,6 +73,11 @@ public class DataParsingService {
             case ".xls":
                 System.out.println("Excel 파싱 프로세스로 이동합니다.");
                 return parseExcelData(physicalFile, dto);
+
+            case ".zip":
+            case ".shp":
+                System.out.println("SHP(ZIP) 파일 스캔 및 프리패스 프로세스로 이동합니다.");
+                return checkShapefileZip(physicalFile, dto);
 
             default:
                 throw new IllegalArgumentException("지원하지 않는 데이터 파일 형식입니다: " + extension);
@@ -446,5 +467,67 @@ public class DataParsingService {
             e.printStackTrace();
             throw new RuntimeException("Excel 파싱 중 치명적 에러 발생: " + e.getMessage());
         }
+    }
+
+    private int checkShapefileZip(File zipFile, DatasetUploadDto dto) throws Exception {
+        
+        // 1. 우리가 반드시 찾아야 할 SHP 필수 확장자 5대장 세팅
+        Set<String> requiredExtensions = new HashSet<>(Arrays.asList(".shp", ".shx", ".dbf", ".prj", ".cpg"));
+        Set<String> foundExtensions = new HashSet<>();
+
+        // 2. 파일 이름 인코딩 설정 (한글 파일명 에러 방지용)
+        String encoding = dto.getEncoding() != null ? dto.getEncoding() : "UTF-8";
+
+        // 3. ZIP 파일 스캔 시작 (물리적으로 압축을 풀지 않고 파일 이름만 추출)
+        try (FileInputStream fis = new FileInputStream(zipFile);
+             ZipInputStream zis = new ZipInputStream(fis, Charset.forName(encoding))) {
+
+                ZipEntry entry;
+                while ((entry = zis.getNextEntry()) != null) {
+                    if (!entry.isDirectory()) {
+                        String fileName = entry.getName().toLowerCase();
+                        int lastDotIndex = fileName.lastIndexOf(".");
+                        if (lastDotIndex != -1) {
+                            foundExtensions.add(fileName.substring(lastDotIndex));
+                        }
+                    }
+                }
+            } catch (IllegalArgumentException e) {
+                // 인코딩이 안 맞아서 에러가 났을 경우 (주로 UTF-8 파일에 EUC-KR을 먹였을 때)
+                throw new RuntimeException("ZIP 파일 스캔 실패! 압축 파일 내부의 한글 파일명이 깨졌습니다. 인코딩 설정을 변경해 보세요.");
+            }
+
+            // 4. 필수 확장자 5개가 모두 발견되었는지 검사 (requiredExtensions에서 발견된 것을 뺌)
+            requiredExtensions.removeAll(foundExtensions);
+
+            if (requiredExtensions.isEmpty()) {
+                System.out.println("[SHP 검사] 필수 5개 파일 모두 확인 완료! 프리패스 승인합니다.");
+
+                // 프리패스 전용 상태 업데이트 쿼리 실행
+                datasetMapper.updateLogForDirectPass(dto.getUploadId());
+                validationMapper.updateDatasetStatusToRequest(dto.getDatasetId());
+
+                return 0;
+            } else {
+                String errorMessage = "Shapefile 묶음 안에 필수 파일이 누락되었습니다. 누락된 파일: " + requiredExtensions;
+                System.err.println("🚨 [SHP 검사 실패] " + errorMessage);
+
+                // 1. 관제탑(sd_upload_log) 에러 상태 기록 (errorCount는 파일 1개 뭉치이므로 1로 세팅)
+                validationMapper.updateLogValidationFailed(dto.getUploadId(), 1);
+
+                // 2. 파일 메타데이터(sd_gis_dataset_file) 경로 초기화 (빈 문자열)
+                validationMapper.clearDatasetFilePath(dto.getDatasetId());
+
+                // 3. 부모 테이블(sd_gis_dataset) 최종 상태 INVALID 처리
+                validationMapper.updateDatasetStatusToInvalid(dto.getDatasetId());
+
+                // 4. 하드디스크 용량 확보! 불량 ZIP 파일 즉시 영구 파기 (OS 레벨)
+                fileUploadService.deleteTempFile(dto.getStoredFilename());
+                System.out.println("🗑️ [하드 롤백] 불량 ZIP 물리 파일 삭제 완료.");
+
+                // 5. [핵심] RuntimeException 대신 ValidationFailedException 던지기!
+                // 이 예외는 @Transactional(noRollbackFor)에 등록되어 있어서 DB 롤백을 막아줍니다.
+                throw new ValidationFailedException(errorMessage, dto.getUploadId());
+            }
     }
 }

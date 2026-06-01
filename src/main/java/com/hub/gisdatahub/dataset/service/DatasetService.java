@@ -92,9 +92,17 @@ public class DatasetService {
         System.out.println("[작업 반장] 물리 저장 완료! 파싱 전담반에게 데이터 추출을 지시합니다.");
         int totalParsedCount = dataParsingService.parseAndBulkInsert(dto);
 
-        // [제3막 시작] DB에 들어간 데이터를 PostGIS 딥 검증
-        System.out.println("[작업 반장] 파싱 완료! 검증 전담반에게 딥 검증을 지시합니다.");
-        dataValidationService.validateTempData(dto.getUploadId(), dto.getDatasetId(), dto.getStoredFilename(), dto.getOriginalSrid());
+        // [제3막 시작] DB에 들어간 데이터를 PostGIS 딥 검증 (분기 처리)
+        String ext = dto.getFileExtension().toLowerCase();
+        boolean isDirectPass = ext.equals(".zip") || ext.equals(".shp") || ext.equals(".tif") || ext.equals(".tiff");
+
+        if (isDirectPass) {
+            // SHP, TIFF 파일은 이미 파싱 단계에서 프리패스(REQUEST 상태 변경 등) 처리가 완료되었으므로 딥 검증을 생략
+            System.out.println("[작업 반장] 프리패스 파일(" + ext + ") 확인! PostGIS 딥 검증을 생략하고 종료합니다.");
+        } else {
+            System.out.println("[작업 반장] 파싱 완료! 검증 전담반에게 딥 검증을 지시합니다.");
+            dataValidationService.validateTempData(dto.getUploadId(), dto.getDatasetId(), dto.getStoredFilename(), dto.getOriginalSrid());
+        }
 
         return totalParsedCount;
     }

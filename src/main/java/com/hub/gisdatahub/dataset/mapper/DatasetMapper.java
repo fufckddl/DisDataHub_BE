@@ -91,4 +91,9 @@ public interface DatasetMapper {
     void updateDatasetStatusRejected(Long datasetId);
 
     List<MyUploadResponseDto> selectMyUploadList(@Param("userId") int userId);
+
+    // SHP, tiff 데이터 파일 전용 쿼리
+    
+    // 파일 검문소(SHP, TIFF)를 무사통과한 파일의 로그 상태를 성공(COMPLETE/SUCCESS)으로 업데이트
+    void updateLogForDirectPass(Long uploadId);
 }
