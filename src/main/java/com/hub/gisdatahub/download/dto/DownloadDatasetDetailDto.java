@@ -17,7 +17,7 @@ public class DownloadDatasetDetailDto {
     private Integer originalSrid;
     private Integer storageSrid;
     private Integer analysisSrid;
-    private Boolean spatial;
+    private Boolean isSpatial;
     private Boolean isPublic;
     private String status;
     private LocalDateTime createdAt;
