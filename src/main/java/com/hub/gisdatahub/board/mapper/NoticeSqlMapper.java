@@ -20,8 +20,11 @@ public interface NoticeSqlMapper {
     public List<BoardPostDto> findAdminNoticeList();
     // 관리자 공지사항 상세 페이지
     public BoardPostDto findByAdminDetailPage(Long postId);
-
     // 수정기능
     public int updateNoticePost(BoardPostDto boardPostDto);
+    // 삭제기능
+    public int deleteNoticePost(Long postId);
+    // 조회수 증가
+    public int increaseNoticeViewCount(Long postId);
 }
 

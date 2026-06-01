@@ -21,6 +21,8 @@ public class NoticeServiceImpl implements NoticeService {
 
     @Override
     public BoardPostDto getNoticeDetailData(Long postId) {
+        noticeSqlMapper.increaseNoticeViewCount(postId);
+
         return noticeSqlMapper.findByNoticeDetailData(postId);
     }
 
@@ -54,10 +56,24 @@ public class NoticeServiceImpl implements NoticeService {
         if (boardPostDto.getVisibilityStatus() == null) {
             boardPostDto.setVisibilityStatus("PUBLIC");
         }
+
         if (boardPostDto.getPinnedYn() == null) {
             boardPostDto.setPinnedYn("N");
         }
 
-        noticeSqlMapper.updateNoticePost(boardPostDto);
+        int updateCount = noticeSqlMapper.updateNoticePost(boardPostDto);
+
+        if (updateCount == 0) {
+            throw new RuntimeException("수정할 공지사항을 찾을 수 없습니다.");
+        }
+    }
+
+    @Override
+    public void deleteNoticePost(Long postId) {
+        int deleteCount = noticeSqlMapper.deleteNoticePost(postId);
+
+        if (deleteCount == 0) {
+            throw new RuntimeException("삭제할 공지사항을 찾을 수 없습니다.");
+        }
     }
 }

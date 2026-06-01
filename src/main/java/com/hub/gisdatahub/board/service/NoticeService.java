@@ -16,4 +16,6 @@ public interface NoticeService {
     public BoardPostDto getAdminNoticeDetailData(Long postId);
 
     public void updateNoticePost(Long postId, BoardPostDto boardPostDto);
+
+    public void deleteNoticePost(Long postId);
 }
