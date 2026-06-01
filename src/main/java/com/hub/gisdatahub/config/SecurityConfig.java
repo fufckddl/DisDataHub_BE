@@ -72,6 +72,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/opendata/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/dashboard/**").permitAll()
                         .requestMatchers("/error").permitAll()
+                        // 게시판 문의게시판 조회 기능 
+                        .requestMatchers(HttpMethod.GET, "/api/board/inquiries/**").permitAll()
                         // 게시판 공지게시판 목록 로그인 없이 조회 가능하게 만들어주는 설정
                         .requestMatchers(HttpMethod.GET, "/api/board/notices/**").permitAll()
                         // 공지사항 게시글 테스트용 코드 추가 (비로그인 게시글작성 o)
