@@ -11,6 +11,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import com.hub.gisdatahub.dataset.dto.AdminApprovalDetailResponseDto;
 import com.hub.gisdatahub.dataset.dto.AdminApprovalResponseDto;
+import com.hub.gisdatahub.dataset.dto.MapFeatureDto;
 import com.hub.gisdatahub.dataset.mapper.DatasetMapper;
 
 @Service
@@ -153,6 +154,28 @@ public class AdminApprovalService {
             System.out.println("반려 처리 중 DB 에러 발생 (롤백 진행): " + e.getMessage());
             throw e;
         }
+    }
+
+    @Transactional(readOnly = true)
+    public List<MapFeatureDto> getMapFeatures(Long datasetId) {
+        System.out.println("[지도 시각화] 데이터셋(" + datasetId + ")의 공간 데이터 추출을 시작합니다.");
+
+        // 1. 해당 데이터셋의 가장 최근 upload_id 찾기
+        Long uploadId = datasetMapper.selectLatestUploadIdByDatasetId(datasetId);
+
+        // 방어막: 데이터가 아예 꼬여서 uploadId가 없으면 빈 리스트 반환
+        if (uploadId == null) {
+            System.err.println("🚨 해당 데이터셋의 업로드 로그를 찾을 수 없습니다.");
+            return java.util.Collections.emptyList();
+        }
+
+        // 2. 매퍼에게 번역된 데이터 긁어오라고 지시
+        List<MapFeatureDto> features = datasetMapper.selectMapFeaturesByUploadId(uploadId);
+
+        // 💡 프리패스된 SHP나 TIFF 파일은 여기서 자연스럽게 0개(빈 배열)가 조회됩니다.)
+        System.out.println("[지도 시각화] 총 " + features.size() + "개의 GeoJSON 데이터를 프론트엔드로 전송합니다.");
+
+        return features;
     }
 
 }

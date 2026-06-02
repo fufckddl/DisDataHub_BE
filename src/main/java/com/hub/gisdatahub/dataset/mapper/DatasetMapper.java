@@ -8,6 +8,7 @@ import org.apache.ibatis.annotations.Param;
 import com.hub.gisdatahub.dataset.dto.AdminApprovalDetailResponseDto;
 import com.hub.gisdatahub.dataset.dto.AdminApprovalResponseDto;
 import com.hub.gisdatahub.dataset.dto.DatasetUploadDto;
+import com.hub.gisdatahub.dataset.dto.MapFeatureDto;
 import com.hub.gisdatahub.dataset.dto.MyUploadResponseDto;
 import com.hub.gisdatahub.dataset.dto.TempFeatureDto;
 
@@ -93,7 +94,10 @@ public interface DatasetMapper {
     List<MyUploadResponseDto> selectMyUploadList(@Param("userId") int userId);
 
     // SHP, tiff 데이터 파일 전용 쿼리
-    
     // 파일 검문소(SHP, TIFF)를 무사통과한 파일의 로그 상태를 성공(COMPLETE/SUCCESS)으로 업데이트
     void updateLogForDirectPass(Long uploadId);
+
+    // 관리자 시각화 검증 지도 전용 쿼리
+    // 특정 업로드 간의 공간 데이터를 GeoJSON 형태로 모두 가져오기
+    List<MapFeatureDto> selectMapFeaturesByUploadId(Long uploadId);
 }

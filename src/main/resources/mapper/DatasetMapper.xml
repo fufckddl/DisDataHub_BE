@@ -352,4 +352,15 @@
             success_count = 0
         WHERE upload_id = #{uploadId}
     </update>
+
+    <select id="selectMapFeaturesByUploadId" parameterType="long" resultType="MapFeatureDto">
+        SELECT 
+            feature_name AS featureName,
+            spatial_type AS spatialType,
+            ST_AsGeoJSON(geom_4326) AS geoJson
+        FROM sd_upload_temp_feature
+        WHERE upload_id = #{uploadId}
+          AND validation_status = 'VALID'
+          AND geom_4326 IS NOT NULL
+    </select>
 </mapper>

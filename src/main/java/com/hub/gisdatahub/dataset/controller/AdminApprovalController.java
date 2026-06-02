@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.hub.gisdatahub.dataset.dto.AdminApprovalDetailResponseDto;
 import com.hub.gisdatahub.dataset.dto.AdminApprovalResponseDto;
 import com.hub.gisdatahub.dataset.dto.AdminRejectRequestDto;
+import com.hub.gisdatahub.dataset.dto.MapFeatureDto;
 import com.hub.gisdatahub.dataset.service.AdminApprovalService;
 
 @RestController
@@ -127,6 +128,28 @@ public class AdminApprovalController {
             System.err.println("[Controller] 치명적 시스템 오류 (롤백 완료): " + e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body("서버 내부 오류로 반려 처리에 실패했습니다.");
+        }
+    }
+
+    @GetMapping("/approvals/{datasetId}/map-data")
+    public ResponseEntity<?> getMapData(@PathVariable("datasetId") Long datasetId, Authentication authentication) {
+        System.out.println("[관리자 컨트롤러] 지도 시각화 데이터 요청 접수 - datasetId: " + datasetId);
+
+        // 1. 관리자 토큰(신분증) 검사
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("로그인이 필요합니다.");
+        }
+
+        try {
+            // 2. 서빗 작업 반장 호출해서 데이터 긁어오기
+            List<MapFeatureDto> mapData = adminApprovalService.getMapFeatures(datasetId);
+
+            // 3. 리액트로 안전하게 배달
+            return ResponseEntity.ok(mapData);
+        } catch (Exception e) {
+            System.err.println("🚨 지도 데이터 조회 중 서버 내부 오류: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("지도 시각화 데이터를 불러오는 중 오류가 발생했습니다.");
         }
     }
 }

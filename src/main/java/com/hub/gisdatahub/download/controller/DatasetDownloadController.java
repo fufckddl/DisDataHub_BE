@@ -2,16 +2,20 @@ package com.hub.gisdatahub.download.controller;
 
 import java.util.List;
 
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.hub.gisdatahub.download.dto.DatasetDownloadPageDto;
 import com.hub.gisdatahub.download.dto.DownloadDatasetListItemDto;
+import com.hub.gisdatahub.download.dto.DownloadExportResultDto;
 import com.hub.gisdatahub.download.service.DatasetDownloadService;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -87,4 +91,27 @@ public class DatasetDownloadController {
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(geoJson);
     }
+
+// 다운로드 파일 변환 과정
+    @GetMapping("/datasets/{datasetId}/download")
+    public ResponseEntity<ByteArrayResource> downloadDatasetByFormat(
+        @PathVariable("datasetId") Long datasetId,
+        @RequestParam("format") String format,
+        Authentication authentication,
+        HttpServletRequest request){
+
+
+    Integer userId = resolveAuthenticatedUserId(authentication);
+    String downloadIp = extractClientIp(request);
+
+    DownloadExportResultDto result =
+            datasetDownloadService.downloadDatasetByFormat(datasetId, format, userId, downloadIp);
+
+    return ResponseEntity.ok()
+            .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + result.getFileName() + "\"")
+            .contentType(MediaType.parseMediaType(result.getContentType()))
+            .body(new ByteArrayResource(result.getBytes()));            
+
+        }
+
 }
