@@ -202,5 +202,49 @@
         from features
     </select>
 
+<!-- 다운로드 파일 변환 과정 -->
 
+    <!-- 다운로드용 GeoJSON: preview와 달리 limit 제거 -->
+    <select id="findDatasetExportGeoJson"
+            parameterType="java.lang.Long"
+            resultType="java.lang.String">
+        with features as (
+            select jsonb_build_object(
+                'type', 'Feature',
+                'geometry', ST_AsGeoJSON(ST_MakeValid(f.geom_4326), 5)::jsonb,
+                'properties',
+                    jsonb_build_object(
+                        'featureId', f.feature_id,
+                        'name', f.feature_name,
+                        'spatialType', f.spatial_type
+                    )
+                    ||
+                    coalesce(f.properties, '{}'::jsonb)
+            ) as feature
+            from sd_gis_feature f
+            where f.dataset_id = #{datasetId}
+            order by f.feature_id
+        )
+        select jsonb_build_object(
+            'type', 'FeatureCollection',
+            'features', coalesce(jsonb_agg(feature), '[]'::jsonb)
+        )::text
+        from features
+    </select>
+
+    <!-- CSV / KML / SHP 생성용 -->
+    <select id="findDatasetFeaturesForExport"
+            parameterType="java.lang.Long"
+            resultType="com.hub.gisdatahub.download.dto.DatasetFeatureExportDto">
+        select
+            f.feature_id,
+            f.feature_name,
+            f.spatial_type,
+            f.properties::text as properties_json,
+            ST_AsText(ST_MakeValid(f.geom_4326)) as geometry_wkt,
+            ST_AsGeoJSON(ST_MakeValid(f.geom_4326), 5) as geometry_json
+        from sd_gis_feature f
+        where f.dataset_id = #{datasetId}
+        order by f.feature_id
+    </select>
 </mapper>

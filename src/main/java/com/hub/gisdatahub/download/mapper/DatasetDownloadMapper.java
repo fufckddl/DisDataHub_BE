@@ -6,6 +6,7 @@ import java.util.List;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
+import com.hub.gisdatahub.download.dto.DatasetFeatureExportDto;
 import com.hub.gisdatahub.download.dto.DatasetStatDto;
 import com.hub.gisdatahub.download.dto.DatasetViewLogDto;
 import com.hub.gisdatahub.download.dto.DownloadDatasetDetailDto;
@@ -67,5 +68,8 @@ public interface DatasetDownloadMapper {
     public String findDatasetPreviewGeoJson(Long datasetId);
     
     
+// 다운로드 파일 변환 과정
+    public String findDatasetExportGeoJson(Long datasetId);
     
+    public List<DatasetFeatureExportDto> findDatasetFeaturesForExport(Long datasetId);
 }

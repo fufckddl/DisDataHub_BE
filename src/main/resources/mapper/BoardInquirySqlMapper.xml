@@ -31,4 +31,42 @@
         ORDER BY bp.created_at DESC
     </select>
 
+    <!-- 문의 게시글 기본 정보 저장 -->
+    <insert id="insertInquiryPost"
+            parameterType="com.hub.gisdatahub.board.dto.BoardPostDto"
+            useGeneratedKeys="true"
+            keyProperty="postId"
+            keyColumn="post_id">
+        INSERT INTO sd_board_post (
+            board_type_code,
+            user_id,
+            title,
+            content,
+            visibility_status,
+            pinned_yn
+        )
+        VALUES (
+            'INQUIRY',
+            #{userId},
+            #{title},
+            #{content},
+            #{visibilityStatus},
+            'N'
+        )
+    </insert>
+
+    <!-- 문의 게시글 상세 정보 저장 -->
+    <insert id="insertInquiryDetail"
+            parameterType="com.hub.gisdatahub.board.dto.InquiryDetailDto">
+        INSERT INTO sd_inquiry_detail (
+            post_id,
+            inquiry_category_code,
+            inquiry_status_code
+        )
+        VALUES (
+            #{postId},
+            #{inquiryCategoryCode},
+            'RECEIVED'
+        )
+    </insert>
 </mapper>
