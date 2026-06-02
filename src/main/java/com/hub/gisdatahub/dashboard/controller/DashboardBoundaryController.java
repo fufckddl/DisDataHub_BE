@@ -13,6 +13,7 @@ import com.hub.gisdatahub.dashboard.dto.AreaPopulationChartResponse;
 import com.hub.gisdatahub.dashboard.dto.DashboardGisDataSourceResponse;
 import com.hub.gisdatahub.dashboard.dto.DashboardGisDatasetResponse;
 import com.hub.gisdatahub.dashboard.dto.DashboardGisMetricResponse;
+import com.hub.gisdatahub.dashboard.dto.DashboardGisRegionStatsResponse;
 import com.hub.gisdatahub.dashboard.dto.FloatingPopulationChartResponse;
 import com.hub.gisdatahub.dashboard.service.DashboardBoundaryService;
 
@@ -75,6 +76,23 @@ public class DashboardBoundaryController {
         @RequestParam(required = false) String datasetCode
     ) {
         return dashboardBoundaryService.getDashboardGisMetrics(sourceCode, datasetCode);
+    }
+
+    @GetMapping(value = "/gis-features", produces = MediaType.APPLICATION_JSON_VALUE)
+    public String getDashboardGisFeatures(
+        @RequestParam String datasetCode,
+        @RequestParam(required = false) String bbox,
+        @RequestParam(required = false) String areaCode,
+        @RequestParam(defaultValue = "500") int limit
+    ) {
+        return dashboardBoundaryService.getDashboardGisFeatures(datasetCode, bbox, areaCode, limit);
+    }
+
+    @GetMapping("/gis-region-stats")
+    public DashboardGisRegionStatsResponse getDashboardGisRegionStats(
+        @RequestParam String datasetCode
+    ) {
+        return dashboardBoundaryService.getDashboardGisRegionStats(datasetCode);
     }
 
     @GetMapping("/floating-population")

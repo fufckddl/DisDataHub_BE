@@ -1,10 +1,13 @@
 package com.hub.gisdatahub.dashboard.service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -20,6 +23,8 @@ import com.hub.gisdatahub.dashboard.dto.AreaPopulationDto;
 import com.hub.gisdatahub.dashboard.dto.DashboardGisDataSourceResponse;
 import com.hub.gisdatahub.dashboard.dto.DashboardGisDatasetResponse;
 import com.hub.gisdatahub.dashboard.dto.DashboardGisMetricResponse;
+import com.hub.gisdatahub.dashboard.dto.DashboardGisRegionStatItem;
+import com.hub.gisdatahub.dashboard.dto.DashboardGisRegionStatsResponse;
 import com.hub.gisdatahub.dashboard.dto.FloatingPopulationChartResponse;
 import com.hub.gisdatahub.dashboard.dto.FloatingPopulationRankItem;
 import com.hub.gisdatahub.dashboard.dto.PopulationChartDataset;
@@ -173,6 +178,8 @@ public class DashboardBoundaryService {
     private static final List<String> POPULATION_AGE_LABELS = List.of(
             "0-9", "10-19", "20-29", "30-39", "40-49", "50-59",
             "60-69", "70-79", "80-89", "90-99", "100+");
+    private static final String EV_CHARGER_DATASET_CODE = "KECO_EV_CHARGER_MAIN";
+    private static final String EV_CHARGER_COUNT_METRIC_CODE = "EV_CHARGER_COUNT";
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
     private final DashboardPopulationMapper populationMapper;
@@ -488,7 +495,292 @@ public class DashboardBoundaryService {
         return jdbcTemplate.query(sql, params, (rs, rowNum) -> mapDashboardGisMetric(rs));
     }
 
+    public String getDashboardGisFeatures(String datasetCode, String bbox, String areaCode, int limit) {
+        String resolvedDatasetCode = normalizeRequired(datasetCode, "datasetCode는 필수입니다.");
+        Bbox resolvedBbox = resolveOptionalBbox(bbox);
+        String resolvedAreaCode = resolveOptionalAreaCode(areaCode);
+        int resolvedLimit = normalizeFeatureLimit(limit);
+        String bboxFilter = resolvedBbox == null
+                ? ""
+                : """
+                  AND COALESCE(
+                      f.geom,
+                      ST_SetSRID(ST_MakePoint(f.longitude::double precision, f.latitude::double precision), 4326)
+                  ) && ST_MakeEnvelope(:minLon, :minLat, :maxLon, :maxLat, 4326)
+                  """;
+        String areaFilter = resolvedAreaCode == null
+                ? ""
+                : """
+                  AND EXISTS (
+                      SELECT 1
+                      FROM public.sd_area_boundary b
+                      WHERE b.area_code = :areaCode
+                        AND ST_Covers(
+                            ST_MakeValid(b.geom),
+                            COALESCE(
+                                f.geom,
+                                ST_SetSRID(ST_MakePoint(f.longitude::double precision, f.latitude::double precision), 4326)
+                            )
+                        )
+                  )
+                  """;
+
+        String sql = """
+                WITH features AS (
+                    SELECT jsonb_build_object(
+                        'type', 'Feature',
+                        'geometry', ST_AsGeoJSON(
+                            COALESCE(
+                                f.geom,
+                                ST_SetSRID(ST_MakePoint(f.longitude::double precision, f.latitude::double precision), 4326)
+                            ),
+                            6
+                        )::jsonb,
+                        'properties', jsonb_build_object(
+                            'datasetCode', f.dataset_code,
+                            'metricCode', f.metric_code,
+                            'externalId', f.external_id,
+                            'featureName', f.feature_name,
+                            'featureCategory', f.feature_category,
+                            'sourceAreaCode', f.source_area_code,
+                            'sourceAreaName', f.source_area_name,
+                            'address', f.address,
+                            'roadAddress', f.road_address,
+                            'longitude', f.longitude,
+                            'latitude', f.latitude,
+                            'baseDate', f.base_date,
+                            'statusCode', COALESCE(f.status_code, f.raw_payload ->> 'stat'),
+                            'statusName', COALESCE(f.status_name, f.raw_payload ->> 'statNm'),
+                            'chargerType', f.raw_payload ->> 'chgerType',
+                            'output', f.raw_payload ->> 'output',
+                            'useTime', f.raw_payload ->> 'useTime',
+                            'businessName', f.raw_payload ->> 'busiNm',
+                            'businessCall', f.raw_payload ->> 'busiCall',
+                            'parkingFree', f.raw_payload ->> 'parkingFree'
+                        )
+                    ) AS feature
+                    FROM public.sd_dashboard_geo_feature f
+                    WHERE f.dataset_code = :datasetCode
+                      AND f.longitude IS NOT NULL
+                      AND f.latitude IS NOT NULL
+                      %s
+                      %s
+                    ORDER BY f.geo_feature_id DESC
+                    LIMIT :limit
+                )
+                SELECT jsonb_build_object(
+                    'type', 'FeatureCollection',
+                    'features', COALESCE(jsonb_agg(feature), '[]'::jsonb)
+                )::text
+                FROM features
+                """.formatted(bboxFilter, areaFilter);
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("datasetCode", resolvedDatasetCode)
+                .addValue("limit", resolvedLimit);
+        if (resolvedAreaCode != null) {
+            params.addValue("areaCode", resolvedAreaCode);
+        }
+        if (resolvedBbox != null) {
+            params.addValue("minLon", resolvedBbox.minLon());
+            params.addValue("minLat", resolvedBbox.minLat());
+            params.addValue("maxLon", resolvedBbox.maxLon());
+            params.addValue("maxLat", resolvedBbox.maxLat());
+        }
+
+        String geoJson = jdbcTemplate.queryForObject(sql, params, String.class);
+        return geoJson == null ? EMPTY_FEATURE_COLLECTION : geoJson;
+    }
+
+    public DashboardGisRegionStatsResponse getDashboardGisRegionStats(String datasetCode) {
+        String resolvedDatasetCode = normalizeRequired(datasetCode, "datasetCode는 필수입니다.");
+        if (!EV_CHARGER_DATASET_CODE.equals(resolvedDatasetCode)) {
+            return DashboardGisRegionStatsResponse.builder()
+                    .datasetCode(resolvedDatasetCode)
+                    .totalCount(BigDecimal.ZERO)
+                    .items(List.of())
+                    .notice("현재 전체 원천 건수 기준 시도별 통계는 전기차 충전소 데이터셋만 제공합니다.")
+                    .build();
+        }
+
+        String sql = """
+                WITH latest_rows AS (
+                    SELECT
+                        o.area_observation_id,
+                        o.dataset_code,
+                        o.metric_code,
+                        o.area_code,
+                        o.area_level,
+                        o.source_area_code,
+                        o.source_area_name,
+                        o.base_date,
+                        o.observed_at,
+                        o.numeric_value,
+                        o.dimensions,
+                        d.dataset_name,
+                        m.metric_name
+                    FROM public.sd_dashboard_area_observation o
+                    JOIN public.sd_dashboard_dataset d
+                        ON d.dataset_code = o.dataset_code
+                    JOIN public.sd_dashboard_metric m
+                        ON m.dataset_code = o.dataset_code
+                       AND m.metric_code = o.metric_code
+                    WHERE o.dataset_code = :datasetCode
+                      AND o.metric_code = :metricCode
+                      AND o.dimensions ->> 'statsType' = 'SIDO_DISTRIBUTION'
+                      AND o.base_date = (
+                          SELECT MAX(latest.base_date)
+                          FROM public.sd_dashboard_area_observation latest
+                          WHERE latest.dataset_code = :datasetCode
+                            AND latest.metric_code = :metricCode
+                            AND latest.dimensions ->> 'statsType' = 'SIDO_DISTRIBUTION'
+                      )
+                ),
+                stats_rows AS (
+                    SELECT
+                        lr.*,
+                        c.name AS area_name,
+                        c.full_name AS full_name,
+                        CASE
+                            WHEN (lr.dimensions ->> 'apiTotalCount') ~ '^[0-9]+(\\.[0-9]+)?$'
+                                THEN (lr.dimensions ->> 'apiTotalCount')::numeric
+                            ELSE NULL
+                        END AS api_total_count,
+                        SUM(lr.numeric_value) OVER () AS summed_total_count,
+                        MAX(lr.observed_at) OVER () AS collected_at
+                    FROM latest_rows lr
+                    LEFT JOIN public.sd_area_code c
+                        ON c.area_code = lr.area_code
+                )
+                SELECT
+                    dataset_code,
+                    dataset_name,
+                    metric_code,
+                    metric_name,
+                    area_code,
+                    COALESCE(area_name, source_area_name) AS area_name,
+                    COALESCE(full_name, source_area_name) AS full_name,
+                    area_level,
+                    source_area_code,
+                    base_date,
+                    collected_at,
+                    numeric_value,
+                    COALESCE(api_total_count, summed_total_count, 0) AS total_count
+                FROM stats_rows
+                ORDER BY numeric_value DESC NULLS LAST, area_name
+                """;
+
+        List<RegionStatRow> rows = jdbcTemplate.query(
+                sql,
+                new MapSqlParameterSource()
+                        .addValue("datasetCode", resolvedDatasetCode)
+                        .addValue("metricCode", EV_CHARGER_COUNT_METRIC_CODE),
+                (rs, rowNum) -> mapRegionStatRow(rs));
+
+        if (rows.isEmpty()) {
+            return DashboardGisRegionStatsResponse.builder()
+                    .datasetCode(resolvedDatasetCode)
+                    .metricCode(EV_CHARGER_COUNT_METRIC_CODE)
+                    .totalCount(BigDecimal.ZERO)
+                    .items(List.of())
+                    .notice("아직 전기차 충전소 전체 건수 통계가 수집되지 않았습니다.")
+                    .build();
+        }
+
+        BigDecimal totalCount = rows.stream()
+                .map(RegionStatRow::totalCount)
+                .filter(value -> value != null && value.compareTo(BigDecimal.ZERO) > 0)
+                .findFirst()
+                .orElseGet(() -> rows.stream()
+                        .map(RegionStatRow::count)
+                        .filter(value -> value != null)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add));
+
+        List<DashboardGisRegionStatItem> items = new ArrayList<>();
+        for (RegionStatRow row : rows) {
+            BigDecimal count = row.count() == null ? BigDecimal.ZERO : row.count();
+            BigDecimal percent = totalCount.compareTo(BigDecimal.ZERO) > 0
+                    ? count.multiply(BigDecimal.valueOf(100)).divide(totalCount, 2, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO;
+            items.add(DashboardGisRegionStatItem.builder()
+                    .areaCode(row.areaCode())
+                    .areaName(row.areaName())
+                    .fullName(row.fullName())
+                    .areaLevel(row.areaLevel())
+                    .sourceAreaCode(row.sourceAreaCode())
+                    .count(count)
+                    .percent(percent)
+                    .build());
+        }
+
+        RegionStatRow first = rows.get(0);
+        return DashboardGisRegionStatsResponse.builder()
+                .datasetCode(first.datasetCode())
+                .datasetName(first.datasetName())
+                .metricCode(first.metricCode())
+                .metricName(first.metricName())
+                .baseDate(first.baseDate())
+                .collectedAt(first.collectedAt())
+                .totalCount(totalCount)
+                .items(items)
+                .notice("지도는 현재 범위 최대 500건만 표시하고, 원형 그래프는 원천 API 전체 건수 기준 시도별 비율입니다.")
+                .build();
+    }
+
     private String getSidoBoundaries(String sidoCode, Bbox bbox) {
+        String cachedGeoJson = getCachedSidoBoundaries(sidoCode, bbox);
+        if (!isEmptyFeatureCollection(cachedGeoJson)) {
+            return cachedGeoJson;
+        }
+        return getSidoBoundariesFromSigungu(sidoCode, bbox);
+    }
+
+    private String getCachedSidoBoundaries(String sidoCode, Bbox bbox) {
+        String sidoFilter = sidoCode == null ? "" : "AND c.sido_code = :sidoCode";
+        String sql = """
+                WITH features AS (
+                    SELECT jsonb_build_object(
+                        'type', 'Feature',
+                        'geometry', ST_AsGeoJSON(
+                            ST_SimplifyPreserveTopology(ST_MakeValid(b.geom), 0.005),
+                            5
+                        )::jsonb,
+                        'properties', jsonb_build_object(
+                            'areaCode', c.area_code,
+                            'sidoCode', c.sido_code,
+                            'sigunguCode', c.sigungu_code,
+                            'eupmyeondongCode', c.eupmyeondong_code,
+                            'name', c.name,
+                            'fullName', c.full_name,
+                            'level', c.level,
+%s
+                        )
+                    ) AS feature
+                    FROM public.sd_area_boundary b
+                    JOIN public.sd_area_code c
+                        ON c.area_code = b.area_code
+                    WHERE c.level = 'SIDO'
+                      AND c.is_active = TRUE
+                      AND b.boundary_type = 'SIDO'
+                      AND ST_Intersects(
+                          b.geom,
+                          ST_MakeEnvelope(:minLon, :minLat, :maxLon, :maxLat, 4326)
+                      )
+                      %s
+                    ORDER BY c.sido_code
+                )
+                SELECT jsonb_build_object(
+                    'type', 'FeatureCollection',
+                    'features', COALESCE(jsonb_agg(feature), '[]'::jsonb)
+                )::text
+                FROM features
+                """.formatted(NAVIGATION_PROPERTIES_SQL, sidoFilter);
+
+        String geoJson = queryGeoJson(sql, sidoCode, null, bbox);
+        return geoJson == null ? EMPTY_FEATURE_COLLECTION : geoJson;
+    }
+
+    private String getSidoBoundariesFromSigungu(String sidoCode, Bbox bbox) {
         String sidoFilter = sidoCode == null ? "" : "AND c.sido_code = :sidoCode";
         String sql = """
                 WITH sido_rows AS (
@@ -575,6 +867,13 @@ public class DashboardBoundaryService {
 
         String geoJson = queryGeoJson(sql, sidoCode, null, bbox);
         return geoJson == null ? EMPTY_FEATURE_COLLECTION : geoJson;
+    }
+
+    private boolean isEmptyFeatureCollection(String geoJson) {
+        if (geoJson == null || geoJson.isBlank()) {
+            return true;
+        }
+        return geoJson.replaceAll("\\s+", "").contains("\"features\":[]");
     }
 
     private String getSigunguBoundaries(String sidoCode, String parentAreaCode, Bbox bbox) {
@@ -1317,6 +1616,27 @@ public class DashboardBoundaryService {
         return normalized == null ? null : normalized.toUpperCase();
     }
 
+    private String normalizeRequired(String value, String message) {
+        if (value == null || value.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, message);
+        }
+        return value.trim();
+    }
+
+    private Bbox resolveOptionalBbox(String bbox) {
+        if (bbox == null || bbox.isBlank()) {
+            return null;
+        }
+        return resolveBbox(bbox);
+    }
+
+    private int normalizeFeatureLimit(int limit) {
+        if (limit < 1) {
+            return 100;
+        }
+        return Math.min(limit, 1000);
+    }
+
     private DashboardGisDataSourceResponse mapDashboardGisDataSource(ResultSet rs) throws SQLException {
         return DashboardGisDataSourceResponse.builder()
                 .sourceCode(rs.getString("source_code"))
@@ -1377,6 +1697,23 @@ public class DashboardBoundaryService {
                 .build();
     }
 
+    private RegionStatRow mapRegionStatRow(ResultSet rs) throws SQLException {
+        return new RegionStatRow(
+                rs.getString("dataset_code"),
+                rs.getString("dataset_name"),
+                rs.getString("metric_code"),
+                rs.getString("metric_name"),
+                rs.getString("area_code"),
+                rs.getString("area_name"),
+                rs.getString("full_name"),
+                rs.getString("area_level"),
+                rs.getString("source_area_code"),
+                rs.getObject("base_date", LocalDate.class),
+                rs.getObject("collected_at", LocalDateTime.class),
+                rs.getBigDecimal("numeric_value"),
+                rs.getBigDecimal("total_count"));
+    }
+
     private Integer nullableInt(ResultSet rs, String column) throws SQLException {
         int value = rs.getInt(column);
         return rs.wasNull() ? null : value;
@@ -1422,6 +1759,22 @@ public class DashboardBoundaryService {
             int totalSensorCount,
             LocalDate baseDate,
             String hour) {
+    }
+
+    private record RegionStatRow(
+            String datasetCode,
+            String datasetName,
+            String metricCode,
+            String metricName,
+            String areaCode,
+            String areaName,
+            String fullName,
+            String areaLevel,
+            String sourceAreaCode,
+            LocalDate baseDate,
+            LocalDateTime collectedAt,
+            BigDecimal count,
+            BigDecimal totalCount) {
     }
 
     private record Bbox(double minLon, double minLat, double maxLon, double maxLat) {

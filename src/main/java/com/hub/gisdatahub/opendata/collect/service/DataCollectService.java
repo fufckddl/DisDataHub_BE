@@ -150,6 +150,9 @@ public class DataCollectService {
             MoisPageResult pageResult = saveMoisResidentPopulation(responseBody.get(), level, regSeCd, statsYm, areaCodeCache);
             savedCount += pageResult.savedCount();
 
+            if (pageResult.savedCount() < MOIS_PAGE_SIZE) {
+                break;
+            }
             if (pageResult.totalCount() <= pageNo * MOIS_PAGE_SIZE || pageResult.totalCount() == 0) {
                 break;
             }
