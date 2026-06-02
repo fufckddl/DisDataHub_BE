@@ -68,13 +68,10 @@ public class DatasetService {
         // 체크섬 검사 (중복 업로드 원천 차단)
         int duplicateCount = datasetMapper.countByChecksum(dto.getChecksum());
         if (duplicateCount > 0) {
-            System.out.println("[작업 반장] 중복 파일 적발! 방금 저장한 파일을 즉시 파기합니다.");
+            System.out.println("[작업 반장] 중복 파일 적발! 방금 S3에 올린 파일을 즉시 파기합니다.");
 
-            // 1. 방금 하드디스크에 저장했던 파일을 다시 찾아내서 삭제
-            File duplicateFile = new File("C:/tempFiles/" + dto.getStoredFilename());
-            if (duplicateFile.exists()) {
-                duplicateFile.delete();
-            }
+            // 🚀 1. 방패를 호출해서 S3에 올라간 중복 파일을 깨끗하게 지워버립니다!
+            fileUploadService.deleteTempFile(dto.getStoredFilename());
 
             // 2. 비상 탈출 (DB는 트랜잭션 덕분에 알아서 롤백됨)
             throw new RuntimeException("이미 시스템에 등록된 동일한 데이터 파일입니다. (중복 업로드 불가)");
