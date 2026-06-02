@@ -24,7 +24,10 @@ import com.hub.gisdatahub.download.dto.DownloadDatasetDetailDto;
 import com.hub.gisdatahub.download.dto.DownloadDatasetFileDto;
 import com.hub.gisdatahub.download.dto.DownloadDatasetListItemDto;
 import com.hub.gisdatahub.download.dto.DownloadExportResultDto;
+import com.hub.gisdatahub.download.dto.DownloadLogDto;
 import com.hub.gisdatahub.download.mapper.DatasetDownloadMapper;
+import com.hub.gisdatahub.s3.dto.S3DownloadResult;
+import com.hub.gisdatahub.s3.service.S3FileService;
 import com.hub.gisdatahub.user.mapper.UserMapper;
 
 @Service
@@ -32,9 +35,15 @@ public class DatasetDownloadService {
 
     private final DatasetDownloadMapper datasetDownloadMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final S3FileService s3FileService;
 
-    public DatasetDownloadService(DatasetDownloadMapper datasetDownloadMapper, UserMapper userMapper) {
+    public DatasetDownloadService(
+        DatasetDownloadMapper datasetDownloadMapper, 
+        UserMapper userMapper,
+        S3FileService s3FileService
+    ) {
         this.datasetDownloadMapper = datasetDownloadMapper;
+        this.s3FileService = s3FileService;
     }
 
 
@@ -179,38 +188,115 @@ public class DatasetDownloadService {
         }
 
         // 2. 상세와 동일한 권한 정책 사용
+        // 공개면 통과, 비공개면 로그인/ 같은 소속 검사
         validateDatasetDetailAccess(dataset, userId);
 
-        // 3. format 정규화
-        String normalizedFormat = format == null ? "" : format.trim().toUpperCase(Locale.ROOT);
-
-        // 4. 형식별 파일 생성
-        DownloadExportResultDto result;
-        switch (normalizedFormat) {
-            case "CSV":
-                result = exportCsv(datasetId, dataset.getTitle());
-                break;
-            case "GEOJSON":
-                result = exportGeoJson(datasetId, dataset.getTitle());
-                break;
-            case "KML":
-                result = exportKml(datasetId, dataset.getTitle());
-                break;
-            case "SHP":
-                // SHP는 1차에선 구조만 잡고, 실제 구현은 GeoTools 같은 라이브러리 연동이 필요
-                throw new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED, "SHP 다운로드는 준비 중입니다.");
-            default:
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "지원하지 않는 형식입니다.");
+        // 3. 원본 파일 정보 조회
+        DownloadDatasetFileDto sourceFile = datasetDownloadMapper.findSourceFileByDatasetId(datasetId);
+        if(sourceFile == null){
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "원본 파일 정보를 찾을 수 없습니다.");            
         }
 
-        // 5. 파일 생성이 성공했을 때만 다운로드 로그/다운로드 수 증가
-        // TODO: insertDownloadLog(...) + increaseDownloadCount(...)
+        // 4. format 정규화(대문자)
+        // 예 : "GeoJSON" -> "GEOJSON"
+        String normalizedFormat = format == null ? "" : format.trim().toUpperCase(Locale.ROOT);
 
-        return result;        
+        // 5. 원본 파일 확장자 정규화
+        String originalFormat = normalizeSourceFormat(sourceFile.getFileExtension());
+
+        // 6. 사용자가 원본 형식을 선택한 경우
+        DownloadExportResultDto result;
+        if(normalizedFormat.equals(originalFormat)){
+            result = downloadOriginalFileFromS3(sourceFile);
+        }else{
+            // 7. 원본 형식이 아니면 변환 다운로드            
+            switch (normalizedFormat) {
+                case "CSV":
+                    result = exportCsv(datasetId, dataset.getTitle());
+                    break;
+                case "GEOJSON":
+                    result = exportGeoJson(datasetId, dataset.getTitle());
+                    break;
+                case "KML":
+                    // result = exportKml(datasetId, dataset.getTitle());
+                    // break;
+                    throw new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED, "KML 다운로드는 준비 중입니다.");
+                case "SHP":
+                    // SHP는 1차에선 구조만 잡고, 실제 구현은 GeoTools 같은 라이브러리 연동이 필요
+                    throw new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED, "SHP 다운로드는 준비 중입니다.");
+                default:
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "지원하지 않는 형식입니다.");
+            }
+        }
+        // 8. 여기까지 오는 경우는 다운로드 성공, 다운로드 수 증가
+        // 성공시에만 로그 저장 + 다운로드 수 증가
+        recordDownloadSuccess(datasetId, sourceFile, userId, normalizedFormat, downloadIp);
+
+        return result;
     }
 
-    // CSV
-    private DownloadExportResultDto exportCsv(Long datasetId, String datasetTitle) {
+    // 원본 파일 확장자를 버튼 형식과 비교하기 좋은 형태로 바꿔줌
+    private String normalizeSourceFormat(String fileExtension){
+        if (fileExtension == null || fileExtension.isBlank()) {
+            return "";
+        }
+
+        String ext = fileExtension.trim().toUpperCase(Locale.ROOT);
+
+        // ".csv" 같은 경우 앞 점 제거
+        if (ext.startsWith(".")) {
+            ext = ext.substring(1);
+        }
+
+        // 필요하면 표현 차이 맞춤
+        // 예: json을 geojson으로 취급하고 싶을 때
+        if ("JSON".equals(ext)) {
+            return "GEOJSON";
+        }
+
+        return ext;        
+    }
+
+    private DownloadExportResultDto downloadOriginalFileFromS3(DownloadDatasetFileDto sourceFile) {
+        S3DownloadResult result = s3FileService.downloadFile(
+                sourceFile.getFilePath(),
+                sourceFile.getStoredFilename(),
+                sourceFile.getOriginalFilename()
+        );
+
+        // S3FileService는 ByteArrayResource를 반환하므로 byte[]로 꺼내서
+        // 현재 download 응답 DTO에 맞춰 다시 감쌈
+        byte[] bytes = result.resource().getByteArray();
+
+        return new DownloadExportResultDto(
+                result.fileName(),
+                result.contentType(),
+                bytes
+        );
+    }    
+
+    private void recordDownloadSuccess(
+            Long datasetId,
+            DownloadDatasetFileDto sourceFile,
+            Integer userId,
+            String format,
+            String downloadIp
+    ) {
+        DownloadLogDto logDto = new DownloadLogDto();
+        logDto.setDatasetId(datasetId);
+        logDto.setFileId(sourceFile.getFileId());
+        logDto.setUserId(userId);
+        logDto.setDownloadFormat(format);
+        logDto.setDownloadStatus("SUCCESS");
+        logDto.setErrorMessage(null);
+        logDto.setDownloadIp(downloadIp);
+
+        datasetDownloadMapper.insertDownloadLog(logDto);
+        datasetDownloadMapper.increaseDownloadCount(datasetId);
+    }    
+
+        // CSV
+        private DownloadExportResultDto exportCsv(Long datasetId, String datasetTitle) {
         List<DatasetFeatureExportDto> features = datasetDownloadMapper.findDatasetFeaturesForExport(datasetId);
 
         if (features.isEmpty()) {

@@ -205,6 +205,7 @@
 <!-- 다운로드 파일 변환 과정 -->
 
     <!-- 다운로드용 GeoJSON: preview와 달리 limit 제거 -->
+    <!-- DB에서 feature를 GeoJSON으로 만들고 마지막에 FeatureCollection으로 묶어 문자열 JSON 으로 변환 -->
     <select id="findDatasetExportGeoJson"
             parameterType="java.lang.Long"
             resultType="java.lang.String">
