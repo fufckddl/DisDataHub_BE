@@ -13,7 +13,7 @@ import com.hub.gisdatahub.board.dto.InquiryDetailDto;
 import com.hub.gisdatahub.board.service.InquiryService;
 
 @RestController
-@RequestMapping("api/board/inquiry")
+@RequestMapping("/api/board/inquiries")
 public class InquiryController {
 
     @Autowired
