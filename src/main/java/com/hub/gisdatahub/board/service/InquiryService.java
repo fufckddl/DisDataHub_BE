@@ -13,4 +13,7 @@ public interface InquiryService {
     public void createInquiryPost(InquiryCreateRequestDto requestDto);
     // 질문 게시판 상세페이지 불러오는 코드
     public InquiryDetailDto getInquiryDetail(Long postId);
+
+    // 관리자 질문게시판 목록 조회코드
+    public List<InquiryDetailDto> getAdminInquiryList();
 }

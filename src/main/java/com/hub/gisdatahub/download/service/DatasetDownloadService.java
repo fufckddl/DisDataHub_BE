@@ -1,4 +1,4 @@
-﻿package com.hub.gisdatahub.download.service;
+package com.hub.gisdatahub.download.service;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;

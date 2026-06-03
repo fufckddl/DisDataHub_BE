@@ -108,4 +108,32 @@
         AND visibility_status = 'PUBLIC'
         AND deleted_yn = 'N'
     </update>
+
+    <select id="findAdminInquiryList"
+            resultType="com.hub.gisdatahub.board.dto.InquiryDetailDto">
+        SELECT
+            bp.post_id,
+            bp.board_type_code,
+            bp.user_id,
+            bp.title,
+            bp.content,
+            bp.visibility_status,
+            bp.pinned_yn,
+            bp.created_at,
+            bp.view_count,
+            bp.updated_at,
+            bp.deleted_yn,
+            id.inquiry_category_code,
+            id.inquiry_status_code,
+            id.created_at AS inquiry_created_at,
+            id.updated_at AS inquiry_updated_at
+        FROM sd_board_post bp
+        INNER JOIN sd_inquiry_detail id
+            ON bp.post_id = id.post_id
+        WHERE bp.board_type_code = 'INQUIRY'
+        ORDER BY
+            bp.deleted_yn ASC,
+            id.inquiry_status_code ASC,
+            bp.created_at DESC
+    </select>
 </mapper>

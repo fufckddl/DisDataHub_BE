@@ -57,4 +57,16 @@ public class InquiryController {
 
         return response;
     }
+
+    @GetMapping("adminInquiryList")
+    public Map<String, Object> adminInquiryList() {
+        Map<String, Object> response = new HashMap<>();
+
+        List<InquiryDetailDto> adminInquiryList = inquiryService.getAdminInquiryList();
+
+        response.put("adminInquiryList", adminInquiryList);
+        response.put("Result", "success");
+
+        return response;
+    }
 }

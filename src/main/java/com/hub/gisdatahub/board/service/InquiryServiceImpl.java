@@ -55,4 +55,9 @@ public class InquiryServiceImpl implements InquiryService{
 
         return inquirySqlMapper.findInquiryDetail(postId);
     }
+
+    @Override
+    public List<InquiryDetailDto> getAdminInquiryList() {
+        return inquirySqlMapper.findAdminInquiryList();
+    }
 }
