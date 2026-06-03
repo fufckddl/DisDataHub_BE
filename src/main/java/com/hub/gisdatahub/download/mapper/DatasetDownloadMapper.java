@@ -36,9 +36,11 @@ public interface DatasetDownloadMapper {
     // 조회수
     public void increaseViewCount(Long datasetId);
     
-
     // 조회 로그 생성
     public void insertViewLog(DatasetViewLogDto viewLogDto);
+
+    // 
+    public String findCategoryNameByDatasetId(Long datasetId);
 
     
     // 조회 로그 중복 생성 방지용

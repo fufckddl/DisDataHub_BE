@@ -29,24 +29,26 @@
             parameterType="java.lang.Long"
             resultType="com.hub.gisdatahub.download.dto.DownloadDatasetDetailDto">
         select
-            dataset_id,
-            title,
-            description,
-            provider,
-            source_type,
-            spatial_type,
-            file_format,
-            original_srid,
-            storage_srid,
-            analysis_srid,
-            is_spatial,
-            is_public,
-            status,
-            created_at,
-            updated_at
-        from sd_gis_dataset
-        where dataset_id = #{datasetId}
-          and deleted_at is null
+            d.dataset_id,
+            d.title,
+            d.description,
+            d.provider,
+            d.source_type,
+            d.spatial_type,
+            d.file_format,
+            d.original_srid,
+            d.storage_srid,
+            d.analysis_srid,
+            d.is_spatial,
+            d.is_public,
+            d.status,
+            c.category_name_ko,
+            d.created_at,
+            d.updated_at
+        from sd_gis_dataset d
+        inner join sd_data_category c on d.category_id  = c.category_id 
+        where d.dataset_id = #{datasetId}
+        and d.deleted_at is null;
     </select>    
 
     <select id="findDownloadCountById"
@@ -162,6 +164,13 @@
         and view_ip = #{viewIp}
         and created_at >= #{fromTime}
     </select>    
+
+    <select id="findCategoryNameByDatasetId"
+            resultType="java.lang.String">
+        select c.category_name_ko  from sd_gis_dataset d
+        inner join sd_data_category c on d.category_id  = c.category_id 
+        where dataset_id = #{datasetId};    
+    </select>
 
 <!-- 데이터셋 업로드 한 사람의 소속기관 찾기 -->
     <select id="findDatasetOwnerOrganization">

@@ -20,6 +20,7 @@ public class DownloadDatasetDetailDto {
     private Boolean isSpatial;
     private Boolean isPublic;
     private String status;
+    private String categoryNameKo;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;    
 }
