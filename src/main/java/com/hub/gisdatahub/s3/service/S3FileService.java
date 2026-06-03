@@ -31,6 +31,9 @@ import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectResponse;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
+import java.io.InputStream;
+import software.amazon.awssdk.core.sync.ResponseTransformer;
+
 @Service
 public class S3FileService {
 
@@ -146,6 +149,27 @@ public class S3FileService {
         return datePath + "/" + savedFileName;
     }
 
+    // =====================================================================
+    // [신규 추가] 서버 메모리 폭발(OOM) 방지용 안전 스트림 다운로드
+    // 파일 전체를 RAM에 올리지 않고, S3와 연결된 빨대(InputStream)만 반환합니다.
+    // =====================================================================
+    public InputStream downloadFileAsStream(String filePath, String storedFilename) {
+        String objectKey = buildObjectKey(filePath, storedFilename);
+
+        try {
+            return s3Client.getObject(
+                    GetObjectRequest.builder()
+                            .bucket(bucket)
+                            .key(objectKey)
+                            .build(),
+                    ResponseTransformer.toInputStream()); // 핵심: 바이트가 아니라 빨대를 꽂아서 줌!
+        } catch (NoSuchKeyException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "S3에서 다운로드할 파일을 찾을 수 없습니다.", e);
+        } catch (S3Exception e) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "S3 파일 스트림 연결에 실패했습니다.", e);
+        }
+    }
+
     private S3ObjectResult uploadMultipartFile(MultipartFile file, S3PathType pathType) {
         validateMultipartFile(file);
 
@@ -160,7 +184,7 @@ public class S3FileService {
                             .key(objectKey)
                             .contentType(contentType)
                             .build(),
-                    RequestBody.fromBytes(file.getBytes()));
+                    RequestBody.fromInputStream(file.getInputStream(), file.getSize())); // 💡 바이트 대신 빨대를 넘김!
 
             return new S3ObjectResult(
                     bucket,
