@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.hub.gisdatahub.board.dto.AdminInquiryAnswerRequestDto;
 import com.hub.gisdatahub.board.dto.InquiryCreateRequestDto;
 import com.hub.gisdatahub.board.dto.InquiryDetailDto;
 import com.hub.gisdatahub.board.service.InquiryService;
@@ -65,7 +66,33 @@ public class InquiryController {
         List<InquiryDetailDto> adminInquiryList = inquiryService.getAdminInquiryList();
 
         response.put("adminInquiryList", adminInquiryList);
-        response.put("Result", "success");
+        response.put("result", "success");
+
+        return response;
+    }
+
+    @GetMapping("adminInquiryDetail/{postId}")
+    public Map<String, Object> adminInquiryDetail(@PathVariable("postId") Long postId) {
+        Map<String, Object> response = new HashMap<>();
+
+        InquiryDetailDto adminInquiryDetail = inquiryService.getAdminInquiryDetail(postId);
+
+        response.put("adminInquiryDetail", adminInquiryDetail);
+        response.put("result", "success");
+
+        return response;
+    }
+
+    @PostMapping("{postId}/answer")
+    public Map<String, Object> saveAdminInquiryAnswer(
+            @PathVariable("postId") Long postId, 
+            @RequestBody AdminInquiryAnswerRequestDto requestDto
+    ) {
+        Map<String, Object> response = new HashMap<>();
+
+        inquiryService.saveAdminInquiryAnswer(postId, requestDto);
+
+        response.put("result", "success");
 
         return response;
     }

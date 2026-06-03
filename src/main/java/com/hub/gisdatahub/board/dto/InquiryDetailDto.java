@@ -23,4 +23,10 @@ public class InquiryDetailDto {
     private String inquiryStatusCode;
     private LocalDateTime inquiryCreatedAt;
     private LocalDateTime inquiryUpdatedAt;
+    // 답변 및 상태변화 
+    private Long replyId;
+    private Integer answerUserId;
+    private String replyWriterName;
+    private String answerContent;
+    private LocalDateTime answeredAt;
 }

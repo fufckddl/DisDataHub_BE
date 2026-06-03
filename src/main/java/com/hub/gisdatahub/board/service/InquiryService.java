@@ -2,7 +2,7 @@ package com.hub.gisdatahub.board.service;
 
 import java.util.List;
 
-import com.hub.gisdatahub.board.dto.BoardPostDto;
+import com.hub.gisdatahub.board.dto.AdminInquiryAnswerRequestDto;
 import com.hub.gisdatahub.board.dto.InquiryCreateRequestDto;
 import com.hub.gisdatahub.board.dto.InquiryDetailDto;
 
@@ -16,4 +16,8 @@ public interface InquiryService {
 
     // 관리자 질문게시판 목록 조회코드
     public List<InquiryDetailDto> getAdminInquiryList();
+    // 관리자 질문게시판 상세페이지
+    public InquiryDetailDto getAdminInquiryDetail(Long postId);
+    // 관리자 문의 답변 저장 및 상태 변경
+    public void saveAdminInquiryAnswer(Long postId, AdminInquiryAnswerRequestDto requestDto);
 }

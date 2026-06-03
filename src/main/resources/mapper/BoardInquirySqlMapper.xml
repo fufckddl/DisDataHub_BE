@@ -4,8 +4,10 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 
 <mapper namespace="com.hub.gisdatahub.board.mapper.InquirySqlMapper">
-    <!--사용자 질문 게시판 목록 조회 -->
-    <select id="findInquiryList" resultType="com.hub.gisdatahub.board.dto.InquiryDetailDto">
+
+    <!-- 사용자 질문 게시판 목록 조회 -->
+    <select id="findInquiryList"
+            resultType="com.hub.gisdatahub.board.dto.InquiryDetailDto">
         SELECT
             bp.post_id,
             bp.board_type_code,
@@ -18,6 +20,7 @@
             bp.view_count,
             bp.updated_at,
             bp.deleted_yn,
+
             id.inquiry_category_code,
             id.inquiry_status_code,
             id.created_at AS inquiry_created_at,
@@ -70,7 +73,7 @@
         )
     </insert>
 
-    <!-- 상세페이지 커리 -->
+    <!-- 사용자 문의 상세 조회 -->
     <select id="findInquiryDetail"
             parameterType="long"
             resultType="com.hub.gisdatahub.board.dto.InquiryDetailDto">
@@ -86,29 +89,51 @@
             bp.view_count,
             bp.updated_at,
             bp.deleted_yn,
+
             id.inquiry_category_code,
             id.inquiry_status_code,
             id.created_at AS inquiry_created_at,
-            id.updated_at AS inquiry_updated_at
+            id.updated_at AS inquiry_updated_at,
+
+            br.reply_id,
+            br.user_id AS answer_user_id,
+            br.reply_writer_name,
+            br.content AS answer_content,
+            br.created_at AS answered_at
         FROM sd_board_post bp
         INNER JOIN sd_inquiry_detail id
             ON bp.post_id = id.post_id
+        LEFT JOIN (
+            SELECT DISTINCT ON (post_id)
+                reply_id,
+                post_id,
+                user_id,
+                reply_writer_name,
+                content,
+                created_at
+            FROM sd_board_reply
+            WHERE deleted_yn = 'N'
+            ORDER BY post_id, created_at DESC
+        ) br
+            ON bp.post_id = br.post_id
         WHERE bp.post_id = #{postId}
-        AND bp.board_type_code = 'INQUIRY'
-        AND bp.deleted_yn = 'N'
-        AND bp.visibility_status = 'PUBLIC'
+          AND bp.board_type_code = 'INQUIRY'
+          AND bp.deleted_yn = 'N'
+          AND bp.visibility_status = 'PUBLIC'
     </select>
 
+    <!-- 사용자 문의 조회수 증가 -->
     <update id="increaseInquiryViewCount"
             parameterType="long">
         UPDATE sd_board_post
         SET view_count = view_count + 1
         WHERE post_id = #{postId}
-        AND board_type_code = 'INQUIRY'
-        AND visibility_status = 'PUBLIC'
-        AND deleted_yn = 'N'
+          AND board_type_code = 'INQUIRY'
+          AND visibility_status = 'PUBLIC'
+          AND deleted_yn = 'N'
     </update>
 
+    <!-- 관리자 문의 목록 조회 -->
     <select id="findAdminInquiryList"
             resultType="com.hub.gisdatahub.board.dto.InquiryDetailDto">
         SELECT
@@ -123,6 +148,7 @@
             bp.view_count,
             bp.updated_at,
             bp.deleted_yn,
+
             id.inquiry_category_code,
             id.inquiry_status_code,
             id.created_at AS inquiry_created_at,
@@ -136,4 +162,78 @@
             id.inquiry_status_code ASC,
             bp.created_at DESC
     </select>
+
+    <!-- 관리자 문의 상세 조회 -->
+    <select id="findAdminInquiryDetail"
+            parameterType="long"
+            resultType="com.hub.gisdatahub.board.dto.InquiryDetailDto">
+        SELECT
+            bp.post_id,
+            bp.board_type_code,
+            bp.user_id,
+            bp.title,
+            bp.content,
+            bp.visibility_status,
+            bp.pinned_yn,
+            bp.created_at,
+            bp.view_count,
+            bp.updated_at,
+            bp.deleted_yn,
+
+            id.inquiry_category_code,
+            id.inquiry_status_code,
+            id.created_at AS inquiry_created_at,
+            id.updated_at AS inquiry_updated_at,
+
+            br.reply_id,
+            br.user_id AS answer_user_id,
+            br.reply_writer_name,
+            br.content AS answer_content,
+            br.created_at AS answered_at
+        FROM sd_board_post bp
+        INNER JOIN sd_inquiry_detail id
+            ON bp.post_id = id.post_id
+        LEFT JOIN (
+            SELECT DISTINCT ON (post_id)
+                reply_id,
+                post_id,
+                user_id,
+                reply_writer_name,
+                content,
+                created_at
+            FROM sd_board_reply
+            WHERE deleted_yn = 'N'
+            ORDER BY post_id, created_at DESC
+        ) br
+            ON bp.post_id = br.post_id
+        WHERE bp.post_id = #{postId}
+          AND bp.board_type_code = 'INQUIRY'
+    </select>
+
+    <!-- 관리자 답변 저장 -->
+    <insert id="insertInquiryAnswer"
+            parameterType="com.hub.gisdatahub.board.dto.BoardReplyDto">
+        INSERT INTO sd_board_reply (
+            post_id,
+            user_id,
+            reply_writer_name,
+            content
+        )
+        VALUES (
+            #{postId},
+            #{userId},
+            #{replyWriterName},
+            #{content}
+        )
+    </insert>
+
+    <!-- 문의 상태 변경 -->
+    <update id="updateInquiryStatus">
+        UPDATE sd_inquiry_detail
+        SET
+            inquiry_status_code = #{inquiryStatusCode},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE post_id = #{postId}
+    </update>
+
 </mapper>
