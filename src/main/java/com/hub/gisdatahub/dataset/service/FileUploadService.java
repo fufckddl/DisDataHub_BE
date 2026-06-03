@@ -1,34 +1,24 @@
 package com.hub.gisdatahub.dataset.service;
 
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.hub.gisdatahub.dataset.dto.DatasetUploadDto;
+import com.hub.gisdatahub.s3.dto.S3ObjectResult;
+import com.hub.gisdatahub.s3.service.S3FileService;
 
 @Service
 public class FileUploadService {
 
+    // 🚀 C드라이브 설정(FileConfig)을 다 버리고, S3 전담 요원을 고용합니다!
     @Autowired
-    @Qualifier("tempFileRootPath")
-    private String tempRootPath; // C:/tempFiles/
+    private S3FileService s3FileService; 
 
-    @Autowired
-    @Qualifier("uploadFileRootPath")
-    private String uploadRootPath; // C:/uploadFiles/
-
-    // 1️⃣ 파일 기본 정보와 암호만 추출해서 DTO에 담기
+    // 1️⃣ 파일 기본 정보와 암호만 추출해서 DTO에 담기 (변경 없음)
     public void extractFileInfo(MultipartFile file, DatasetUploadDto dto) throws Exception {
         if (file == null || file.isEmpty()) {
             throw new IllegalArgumentException("업로드된 파일이 비어있거나 존재하지 않습니다.");
@@ -44,39 +34,42 @@ public class FileUploadService {
         dto.setMimeType(file.getContentType());
     }
 
-    // 2️⃣ [신규 추가] 저장할 경로와 UUID 파일명만 미리 생성해서 DTO에 담기 (UPDATE 용도)
+    // 2️⃣ DTO 가짜 경로 꽂아넣기 (DatasetService의 기존 흐름을 깨지 않기 위한 더미 데이터)
     public void generateFilePath(DatasetUploadDto dto) {
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy/MM/dd/");
-        String datePath = sdf.format(new Date()); // 예: 2026/05/19/
-        
-        String uuidName = UUID.randomUUID().toString();
-        String storedFilename = datePath + uuidName + dto.getFileExtension(); 
-        
-        dto.setStoredFilename(storedFilename);
+        // S3 요원이 업로드 시점에 알아서 "2026/06/02/uuid.csv"를 생성해주지만, 
+        // 3번 스텝이 에러 나지 않도록 가짜 값을 세팅해 둡니다.
+        // (이 값은 바로 아래 savePhysicalFile에서 진짜 S3 경로로 완벽하게 덮어씌워집니다!)
+        dto.setStoredFilename("temp-ready-to-s3" + dto.getFileExtension());
         dto.setFilePath("tempFiles");
     }
 
-    // 3️⃣ DTO에 담긴 경로를 보고 실제로 하드디스크에 폴더 파고 파일 저장하기
+    // 3️⃣ 진짜 S3 업로드 및 메모리 안전(OOM 방지) 체크섬 계산
     public void savePhysicalFile(MultipartFile file, DatasetUploadDto dto) throws Exception {
-        // DTO에 있는 "2026/05/19/uuid.csv" 문자열을 이용해 물리 파일 객체 생성
-        File targetFile = new File(tempRootPath + dto.getStoredFilename());
+        System.out.println("☁️ [S3 방패] OOM 방지용 안전 스트림으로 체크섬 계산을 시작합니다.");
         
-        // 상위 폴더(2026/05/19)가 없으면 생성
-        File directory = targetFile.getParentFile();
-        if (!directory.exists()) {
-            directory.mkdirs();
-        }
-        
-        // 실제 파일 전송!
-        file.transferTo(targetFile);
-
-        String checksum = calculateChecksum(targetFile);
+        // 1. 메모리 폭발 방지! 빨대(InputStream)를 꽂아 8KB씩 읽어서 체크섬 계산
+        String checksum = calculateChecksumSafely(file);
         dto.setChecksum(checksum);
+
+        System.out.println("☁️ [S3 방패] 체크섬 계산 완료. S3 클라우드로 파일 업로드를 지시합니다.");
+        
+        // 2. S3 요원에게 업로드 지시 (이 안에서 UUID와 날짜 폴더가 자동 생성됨)
+        S3ObjectResult result = s3FileService.uploadToTempFiles(file);
+
+        // 3. S3 요원이 발급한 진짜 클라우드 경로와 파일명으로 DTO 덮어쓰기!
+        dto.setStoredFilename(result.storedFilename());
+        dto.setFilePath(result.filePath());
+        
+        System.out.println("☁️ [S3 방패] S3 업로드 성공! 부여된 경로: " + result.filePath() + "/" + result.storedFilename());
     }
 
-    private String calculateChecksum(File file) throws Exception {
+    // 🚀 [핵심 뇌관 해체] 서버가 절대 뻗지 않는 안전한 체크섬 계산기
+    private String calculateChecksumSafely(MultipartFile file) throws Exception {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        try (InputStream is = new FileInputStream(file)) {
+        
+        // 🚨 file.getBytes()는 2GB 파일을 통째로 RAM에 올리므로 절대 금지! 
+        // InputStream을 열어서 8KB 단위로 쪼개서 마십니다.
+        try (InputStream is = file.getInputStream()) {
             byte[] buffer = new byte[8192];
             int read;
             while ((read = is.read(buffer)) > 0) {
@@ -93,43 +86,34 @@ public class FileUploadService {
         return hexString.toString();
     }
 
-    // 관리자 최종 승인 파이프라인 정용 메서드
+    // ==========================================
+    // 🚀 관리자 파이프라인 전용 방패 메서드들 (S3 연결 완벽 처리)
+    // ==========================================
 
     // 1. Temp 폴더에서 Upload 폴더로 안전하게 '복사(Copy)'
     public void copyToUploadFolder(String storedFilename) throws Exception {
-        File tempFile = new File(tempRootPath + storedFilename);
-        File uploadFile = new File(uploadRootPath + storedFilename);
-
-        // 상위 폴더(에: 2026/05//23)가 없으면 자동 생성
-        File directory = uploadFile.getParentFile();
-        if (!directory.exists()) {
-            directory.mkdirs();
-        }
-
-        // 파일 덮어쓰기 복사 (원본은 절대 건드리지 않음)
-        Files.copy(tempFile.toPath(), uploadFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        // S3 요원에게 클라우드 내부 복사 지시! (네트워크 이동 없이 AWS 내부에서 1초 컷)
+        s3FileService.copyTempFileToUploadFiles(storedFilename);
     }
 
-    // 2. (모든 DB 성공 시) Temp 폴더의 원본 찌거기 파일 삭제
+    // 2. (모든 DB 성공 시) Temp 폴더의 원본 찌꺼기 파일 삭제
     public void deleteTempFile(String storedFilename) {
-        File file = new File(tempRootPath + storedFilename); // FileConfig 경로 사용!
-        if (file.exists()) {
-            boolean isDeleted = file.delete();
-            if (!isDeleted) {
-                // 삭제 실패 시 여기서 조용히 경고 로그만 띄워줍니다.
-                System.err.println("Temp 파일 삭제 실패! 서버 확인 필요: " + file.getAbsolutePath());
-            }
+        try {
+            // S3 요원에게 'tempFiles' 소속이라고 정확히 짚어주며 삭제 지시!
+            s3FileService.deleteFile("tempFiles", storedFilename);
+            System.out.println("tempFiles에서 원본 파일 삭제 성공");
+        } catch (Exception e) {
+            System.err.println("☁️ S3 Temp 파일 삭제 실패! 관리자 콘솔 확인 필요: " + storedFilename);
         }
     }
 
     // 3. (에러 롤백 시) Upload 폴더에 잘못 복사된 파일 파기
     public void deleteUploadFile(String storedFilename) {
-        File file = new File(uploadRootPath + storedFilename); // FileConfig 경로 사용!
-        if (file.exists()) {
-            boolean isDeleted = file.delete();
-            if (!isDeleted) {
-                System.err.println("Upload 롤백 파일 삭제 실패! 서버 확인 필요: " + file.getAbsolutePath());
-            }
+        try {
+            // S3 요원에게 'uploadFiles' 소속이라고 정확히 짚어주며 삭제 지시!
+            s3FileService.deleteFile("uploadFiles", storedFilename);
+        } catch (Exception e) {
+            System.err.println("☁️ S3 Upload 롤백 파일 삭제 실패! 관리자 콘솔 확인 필요: " + storedFilename);
         }
     }
 }

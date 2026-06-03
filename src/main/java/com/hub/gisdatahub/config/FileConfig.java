@@ -3,6 +3,7 @@ package com.hub.gisdatahub.config;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+// 이제 사용 안 하는 파일입니다...!
 @Configuration
 public class FileConfig {
     
