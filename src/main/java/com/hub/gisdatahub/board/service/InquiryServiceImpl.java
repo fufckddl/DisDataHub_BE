@@ -48,4 +48,11 @@ public class InquiryServiceImpl implements InquiryService{
 
         inquirySqlMapper.insertInquiryDetail(inquiryDetailDto);
     }
+
+    @Override
+    public InquiryDetailDto getInquiryDetail(Long postId) {
+        inquirySqlMapper.increaseInquiryViewCount(postId);
+
+        return inquirySqlMapper.findInquiryDetail(postId);
+    }
 }

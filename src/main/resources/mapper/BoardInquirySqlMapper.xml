@@ -69,4 +69,43 @@
             'RECEIVED'
         )
     </insert>
+
+    <!-- 상세페이지 커리 -->
+    <select id="findInquiryDetail"
+            parameterType="long"
+            resultType="com.hub.gisdatahub.board.dto.InquiryDetailDto">
+        SELECT
+            bp.post_id,
+            bp.board_type_code,
+            bp.user_id,
+            bp.title,
+            bp.content,
+            bp.visibility_status,
+            bp.pinned_yn,
+            bp.created_at,
+            bp.view_count,
+            bp.updated_at,
+            bp.deleted_yn,
+            id.inquiry_category_code,
+            id.inquiry_status_code,
+            id.created_at AS inquiry_created_at,
+            id.updated_at AS inquiry_updated_at
+        FROM sd_board_post bp
+        INNER JOIN sd_inquiry_detail id
+            ON bp.post_id = id.post_id
+        WHERE bp.post_id = #{postId}
+        AND bp.board_type_code = 'INQUIRY'
+        AND bp.deleted_yn = 'N'
+        AND bp.visibility_status = 'PUBLIC'
+    </select>
+
+    <update id="increaseInquiryViewCount"
+            parameterType="long">
+        UPDATE sd_board_post
+        SET view_count = view_count + 1
+        WHERE post_id = #{postId}
+        AND board_type_code = 'INQUIRY'
+        AND visibility_status = 'PUBLIC'
+        AND deleted_yn = 'N'
+    </update>
 </mapper>

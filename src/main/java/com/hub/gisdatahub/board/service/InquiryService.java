@@ -11,4 +11,6 @@ public interface InquiryService {
     public List<InquiryDetailDto> getInquiryList();
     // 질문 게시판 기본정보 저장 코드
     public void createInquiryPost(InquiryCreateRequestDto requestDto);
+    // 질문 게시판 상세페이지 불러오는 코드
+    public InquiryDetailDto getInquiryDetail(Long postId);
 }

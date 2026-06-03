@@ -15,4 +15,12 @@ public interface InquirySqlMapper {
     public void insertInquiryPost(BoardPostDto boardPostDto);
     // 질문게시판 상세정보 저장 커리
     public void insertInquiryDetail(InquiryDetailDto inquiryDetailDto);
+    // 문의게시판 디테일 페이지
+    public InquiryDetailDto findInquiryDetail(Long postId);
+    // 문의게시판 카운트
+    public int increaseInquiryViewCount(Long postId);
+    
+
+    // 관리자 질문게시판 목록 조회
+    public List<InquiryDetailDto> findAdminInquiryList();
 }
