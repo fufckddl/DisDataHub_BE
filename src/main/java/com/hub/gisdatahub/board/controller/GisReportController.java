@@ -58,4 +58,16 @@ public class GisReportController {
 
         return response;
     }
+
+    @GetMapping("admin/list")
+    public Map<String, Object> findAdminGisReportList() {
+        Map<String, Object> response = new HashMap<>();
+
+        List<GisReportDetailDto> adminGisReportList = gisReportService.getAdminGisReportList();
+
+        response.put("adminGisReportList", adminGisReportList);
+        response.put("result", "success");
+
+        return response;
+    }
 }

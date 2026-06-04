@@ -11,4 +11,7 @@ public interface GisReportService {
     public void createGisReport(GisReportCreateRequestDto requestDto);
     // 상세페이지 코드
     public GisReportDetailDto getGisReportDetail(Long postId);
+
+    // 관리자 목록 조회코드
+    public List<GisReportDetailDto> getAdminGisReportList();
 }

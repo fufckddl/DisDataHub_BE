@@ -39,4 +39,10 @@ public class GisReportServiceImpl implements GisReportService{
 
         return gisReportSqlMapper.findGisReportDetail(postId);
     }
+
+    @Override
+    public List<GisReportDetailDto> getAdminGisReportList() {
+
+        return gisReportSqlMapper.findAdminGisReportList();
+    }
 }

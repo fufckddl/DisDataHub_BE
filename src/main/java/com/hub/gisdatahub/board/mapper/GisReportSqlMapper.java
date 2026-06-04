@@ -18,4 +18,7 @@ public interface GisReportSqlMapper {
     public GisReportDetailDto findGisReportDetail(Long postId);
     // 조회수 증가
     public int increaseGisReportViewCount(Long postId);
+
+    // 관리자 목록 조회 코드
+    public List<GisReportDetailDto> findAdminGisReportList();
 }
