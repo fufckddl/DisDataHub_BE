@@ -191,4 +191,43 @@
             grd.process_status_code ASC,
             bp.created_at DESC
     </select>
+
+    <!-- 관리자 GIS 오류제보 상세 조회 -->
+    <select id="findAdminGisReportDetail"
+            parameterType="long"
+            resultType="com.hub.gisdatahub.board.dto.GisReportDetailDto">
+        SELECT
+            bp.post_id,
+            bp.board_type_code,
+            bp.user_id,
+            u.username AS writer_name,
+            bp.title,
+            bp.content,
+            bp.visibility_status,
+            bp.pinned_yn,
+            bp.created_at,
+            bp.view_count,
+            bp.updated_at,
+            bp.deleted_yn,
+
+            grd.report_category_code,
+            grd.error_type_code,
+            grd.process_status_code,
+            grd.target_data_name,
+            grd.address,
+            grd.latitude,
+            grd.longitude,
+            grd.sido,
+            grd.sigungu,
+            grd.eupmyeondong,
+            grd.created_at AS report_created_at,
+            grd.updated_at AS report_updated_at
+        FROM sd_board_post bp
+        INNER JOIN sd_gis_report_detail grd
+            ON bp.post_id = grd.post_id
+        LEFT JOIN sd_user u
+            ON bp.user_id = u.user_id
+        WHERE bp.post_id = #{postId}
+        AND bp.board_type_code = 'GIS_REPORT'
+    </select>
 </mapper>

@@ -72,14 +72,28 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/opendata/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/dashboard/**").permitAll()
                         .requestMatchers("/error").permitAll()
-                        // 게시판 GIS 오류 제보 게시판
-                        .requestMatchers(HttpMethod.GET, "/api/board/gis-reports/**").permitAll()
-                        // 게시판 문의게시판 조회 기능 
-                        .requestMatchers(HttpMethod.GET, "/api/board/inquiries/**").permitAll()
-                        // 게시판 공지게시판 목록 로그인 없이 조회 가능하게 만들어주는 설정
-                        .requestMatchers(HttpMethod.GET, "/api/board/notices/**").permitAll()
-                        // 공지사항 게시글 테스트용 코드 추가 (비로그인 게시글작성 o)
-                        .requestMatchers(HttpMethod.POST, "/api/board/notices/createNotice").permitAll()
+                        // 관리자 게시판 API - 로그인한 사용자만 통과, 실제 ADMIN 검사는 Controller의 AdminAuthService에서 처리
+                        .requestMatchers(HttpMethod.GET, "/api/board/gis-reports/admin/**").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/board/inquiries/adminInquiryList").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/board/inquiries/adminInquiryDetail/**").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/board/inquiries/*/answer").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/board/notices/adminNoticeList").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/board/notices/adminNoticeDetail/**").authenticated()
+                        .requestMatchers(HttpMethod.POST, "/api/board/notices/createNotice").authenticated()
+                        .requestMatchers(HttpMethod.PUT, "/api/board/notices/**").authenticated()
+                        .requestMatchers(HttpMethod.DELETE, "/api/board/notices/**").authenticated()
+
+                        // 사용자 게시판 조회 API - 비로그인 허용
+                        .requestMatchers(HttpMethod.GET, "/api/board/gis-reports/findGisReportList").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/board/gis-reports/*").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/board/gis-reports/createGisReport").authenticated()
+
+                        .requestMatchers(HttpMethod.GET, "/api/board/inquiries/findInquiryList").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/board/inquiries/*").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/board/inquiries/createInquiry").authenticated()
+
+                        .requestMatchers(HttpMethod.GET, "/api/board/notices/findNoticeList").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/board/notices/*").permitAll()
                         // 다운로드
                         .requestMatchers(HttpMethod.GET, "/api/download/datasets", "/api/download/datasets/*").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/download/datasets/*/preview-geojson").permitAll()

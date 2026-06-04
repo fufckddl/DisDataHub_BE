@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.hub.gisdatahub.board.dto.BoardPostDto;
+import com.hub.gisdatahub.board.service.AdminAuthService;
 import com.hub.gisdatahub.board.service.NoticeService;
 
 @RestController
@@ -24,6 +26,10 @@ public class NoticeController {
     @Autowired
     public NoticeService noticeService;
 
+    @Autowired
+    public AdminAuthService adminAuthService;
+
+    // 사용자 공지사항 목록 조회
     @GetMapping("findNoticeList")
     public Map<String, Object> findNoticeList() {
         Map<String, Object> response = new HashMap<>();
@@ -36,6 +42,7 @@ public class NoticeController {
         return response;
     }
 
+    // 사용자 공지사항 상세 조회
     @GetMapping("{postId}")
     public Map<String, Object> findNoticeDetail(@PathVariable("postId") Long postId) {
         Map<String, Object> response = new HashMap<>();
@@ -48,8 +55,14 @@ public class NoticeController {
         return response;
     }
 
+    // 관리자 공지사항 작성
     @PostMapping("createNotice")
-    public Map<String, Object> createNotice(@RequestBody BoardPostDto boardPostDto) {
+    public Map<String, Object> createNotice(
+            @RequestBody BoardPostDto boardPostDto,
+            Authentication authentication
+    ) {
+        adminAuthService.requireAdmin(authentication);
+
         Map<String, Object> response = new HashMap<>();
 
         noticeService.createNoticePost(boardPostDto);
@@ -60,8 +73,11 @@ public class NoticeController {
         return response;
     }
 
+    // 관리자 공지사항 목록 조회
     @GetMapping("adminNoticeList")
-    public Map<String, Object> adminNoticeList() {
+    public Map<String, Object> adminNoticeList(Authentication authentication) {
+        adminAuthService.requireAdmin(authentication);
+
         Map<String, Object> response = new HashMap<>();
 
         List<BoardPostDto> adminNotice = noticeService.getAdminNoticeList();
@@ -72,8 +88,14 @@ public class NoticeController {
         return response;
     }
 
+    // 관리자 공지사항 상세 조회
     @GetMapping("adminNoticeDetail/{postId}")
-    public Map<String, Object> adminNoticeDetailPage(@PathVariable("postId") Long postId) {
+    public Map<String, Object> adminNoticeDetailPage(
+            @PathVariable("postId") Long postId,
+            Authentication authentication
+    ) {
+        adminAuthService.requireAdmin(authentication);
+
         Map<String, Object> response = new HashMap<>();
 
         BoardPostDto adminNoticeDetail = noticeService.getAdminNoticeDetailData(postId);
@@ -84,18 +106,32 @@ public class NoticeController {
         return response;
     }
 
+    // 관리자 공지사항 수정
     @PutMapping("{postId}")
-    public Map<String, Object> updateNoticePost(@PathVariable("postId") Long postId, @RequestBody BoardPostDto boardPostDto) {
+    public Map<String, Object> updateNoticePost(
+            @PathVariable("postId") Long postId,
+            @RequestBody BoardPostDto boardPostDto,
+            Authentication authentication
+    ) {
+        adminAuthService.requireAdmin(authentication);
+
         Map<String, Object> response = new HashMap<>();
 
         noticeService.updateNoticePost(postId, boardPostDto);
 
         response.put("result", "success");
+
         return response;
     }
 
+    // 관리자 공지사항 삭제
     @DeleteMapping("{postId}")
-    public Map<String, Object> deleteNoticePost(@PathVariable("postId") Long postId) {
+    public Map<String, Object> deleteNoticePost(
+            @PathVariable("postId") Long postId,
+            Authentication authentication
+    ) {
+        adminAuthService.requireAdmin(authentication);
+
         Map<String, Object> response = new HashMap<>();
 
         noticeService.deleteNoticePost(postId);

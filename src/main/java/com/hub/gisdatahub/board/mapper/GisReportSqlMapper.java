@@ -21,4 +21,6 @@ public interface GisReportSqlMapper {
 
     // 관리자 목록 조회 코드
     public List<GisReportDetailDto> findAdminGisReportList();
+    // 관리자 상세페이지 조회 코드
+    public GisReportDetailDto findAdminGisReportDetail(Long postId);
 }

@@ -14,4 +14,6 @@ public interface GisReportService {
 
     // 관리자 목록 조회코드
     public List<GisReportDetailDto> getAdminGisReportList();
+    // 관리자 상세페이지 코드
+    public GisReportDetailDto getAdminGisReportDetail(Long postId);
 }
