@@ -40,4 +40,108 @@
             AND bp.visibility_status = 'PUBLIC'
         ORDER BY bp.created_at DESC
     </select>
+
+    <!-- GIS 오류제보 게시글 기본 정보 저장 -->
+    <insert id="insertGisReportPost"
+            parameterType="com.hub.gisdatahub.board.dto.GisReportCreateRequestDto"
+            useGeneratedKeys="true"
+            keyProperty="postId"
+            keyColumn="post_id">
+        INSERT INTO sd_board_post (
+            board_type_code,
+            user_id,
+            title,
+            content,
+            visibility_status,
+            pinned_yn
+        )
+        VALUES (
+            'GIS_REPORT',
+            #{userId},
+            #{title},
+            #{content},
+            #{visibilityStatus},
+            'N'
+        )
+    </insert>
+
+    <!-- GIS 오류제보 상세 정보 저장 -->
+    <insert id="insertGisReportDetail"
+            parameterType="com.hub.gisdatahub.board.dto.GisReportCreateRequestDto">
+        INSERT INTO sd_gis_report_detail (
+            post_id,
+            report_category_code,
+            error_type_code,
+            process_status_code,
+            target_data_name,
+            address,
+            latitude,
+            longitude,
+            sido,
+            sigungu,
+            eupmyeondong
+        )
+        VALUES (
+            #{postId},
+            #{reportCategoryCode},
+            #{errorTypeCode},
+            'RECEIVED',
+            #{targetDataName},
+            #{address},
+            #{latitude},
+            #{longitude},
+            #{sido},
+            #{sigungu},
+            #{eupmyeondong}
+        )
+    </insert>
+
+    <!-- 사용자 GIS 오류제보 상세 조회 -->
+    <select id="findGisReportDetail"
+            parameterType="long"
+            resultType="com.hub.gisdatahub.board.dto.GisReportDetailDto">
+        SELECT
+            bp.post_id,
+            bp.board_type_code,
+            bp.user_id,
+            bp.title,
+            bp.content,
+            bp.visibility_status,
+            bp.pinned_yn,
+            bp.created_at,
+            bp.view_count,
+            bp.updated_at,
+            bp.deleted_yn,
+
+            grd.report_category_code,
+            grd.error_type_code,
+            grd.process_status_code,
+            grd.target_data_name,
+            grd.address,
+            grd.latitude,
+            grd.longitude,
+            grd.sido,
+            grd.sigungu,
+            grd.eupmyeondong,
+            grd.created_at AS report_created_at,
+            grd.updated_at AS report_updated_at
+        FROM sd_board_post bp
+        INNER JOIN sd_gis_report_detail grd
+            ON bp.post_id = grd.post_id
+        WHERE bp.post_id = #{postId}
+        AND bp.board_type_code = 'GIS_REPORT'
+        AND bp.deleted_yn = 'N'
+        AND bp.visibility_status = 'PUBLIC'
+    </select>
+
+    <!-- 사용자 GIS 오류제보 조회수 증가 -->
+    <update id="increaseGisReportViewCount"
+            parameterType="long">
+        UPDATE sd_board_post
+        SET view_count = view_count + 1
+        WHERE post_id = #{postId}
+        AND board_type_code = 'GIS_REPORT'
+        AND visibility_status = 'PUBLIC'
+        AND deleted_yn = 'N'
+    </update>
 </mapper>
