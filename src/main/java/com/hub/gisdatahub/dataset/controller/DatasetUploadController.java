@@ -2,9 +2,13 @@ package com.hub.gisdatahub.dataset.controller;
 
 import com.hub.gisdatahub.dataset.service.DataValidationService;
 import com.hub.gisdatahub.dataset.service.DatasetService;
+import com.hub.gisdatahub.user.domain.User;
+import com.hub.gisdatahub.user.service.UserService;
+import com.hub.gisdatahub.user.type.UserRole;
 
 import java.util.List;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -27,9 +31,26 @@ public class DatasetUploadController {
     private final DataValidationService dataValidationService;
     private final DatasetService datasetService;
 
+    @Autowired
+    private UserService userService;
+
     DatasetUploadController(DatasetService datasetService, DataValidationService dataValidationService) {
         this.datasetService = datasetService;
         this.dataValidationService = dataValidationService;
+    }
+
+    private boolean isResearcher(Authentication authentication) {
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return false;
+        }
+        try {
+            int userId = Integer.parseInt((String) authentication.getPrincipal());
+            User user = userService.getMe(userId);
+
+            return user.getRole() == UserRole.RESEARCHER;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     @PostMapping("/data")
@@ -38,14 +59,12 @@ public class DatasetUploadController {
         Authentication authentication
     ) {
 
-        // 🚀 1. 보안 신분증 검사 대신, 임시로 무조건 1번 유저라고 뻥치기!
-        // int userId = 1;
-
         try {
             System.out.println("[1층 안내데스크] 택배 도착! 작업 반장에게 넘깁니다.");
 
-            if (authentication == null || !authentication.isAuthenticated()) {
-                return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("로그인 세션이 만료되었거나 정보가 없습니다.");
+            if (!isResearcher(authentication)) {
+                System.err.println("🚨 삐빅! 연구자가 아닌 유저의 업로드 시도 차단!");
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body("데이터 업로드는 연구자만 가능합니다.");
             }
             
 
@@ -90,8 +109,8 @@ public class DatasetUploadController {
     public ResponseEntity<?> getMyUploadList(Authentication authentication) {
 
         // 1. 신분증(토큰) 검사
-        if (authentication == null || !authentication.isAuthenticated()) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("로그인이 필요합니다.");
+        if (!isResearcher(authentication)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다. (연구자 전용)");
         }
 
         try {

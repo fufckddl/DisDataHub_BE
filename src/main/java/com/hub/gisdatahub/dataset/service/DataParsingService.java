@@ -225,7 +225,7 @@ public class DataParsingService {
                         if (firstKey == null) firstKey = key;
 
                         String lowerKey = key.toLowerCase();
-                        if (lowerKey.contains("name") || lowerKey.contains("명") || lowerKey.contains("이름")) {
+                        if (lowerKey.contains("name") || lowerKey.contains("명") || lowerKey.contains("이름") || lowerKey.contains("title")) {
                             extractedName = properties.get(key).asText();
                             break; 
                         }
