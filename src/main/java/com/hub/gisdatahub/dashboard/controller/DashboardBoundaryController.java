@@ -1,6 +1,7 @@
 package com.hub.gisdatahub.dashboard.controller;
 
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -34,6 +35,12 @@ public class DashboardBoundaryController {
             @RequestParam(required = false) String parentAreaCode,
             @RequestParam(required = false) String bbox) {
         return dashboardBoundaryService.getAreaBoundaries(level, sidoCode, parentAreaCode, bbox);
+    }
+
+    @GetMapping(value = "/area-boundary-cache", produces = MediaType.APPLICATION_JSON_VALUE)
+    public String getAreaBoundaryCache(
+            @RequestParam(defaultValue = "SIDO,SIGUNGU,EUPMYEONDONG") String levels) {
+        return dashboardBoundaryService.getAreaBoundaryCache(levels);
     }
 
     @GetMapping("/area-navigation")
@@ -93,6 +100,15 @@ public class DashboardBoundaryController {
         @RequestParam String datasetCode
     ) {
         return dashboardBoundaryService.getDashboardGisRegionStats(datasetCode);
+    }
+
+    @GetMapping("/gis-observations")
+    public Map<String, Object> getDashboardGisObservations(
+        @RequestParam String datasetCode,
+        @RequestParam(required = false) String areaCode,
+        @RequestParam(defaultValue = "12") int limit
+    ) {
+        return dashboardBoundaryService.getDashboardGisObservations(datasetCode, areaCode, limit);
     }
 
     @GetMapping("/floating-population")

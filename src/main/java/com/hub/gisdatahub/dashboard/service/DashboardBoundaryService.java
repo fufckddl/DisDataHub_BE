@@ -8,9 +8,18 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -41,6 +50,15 @@ public class DashboardBoundaryService {
     private static final double MAX_SIGUNGU_BBOX_AREA = 25.0;
     private static final double MAX_EUPMYEONDONG_BBOX_AREA = 2.0;
     private static final double MAX_JIPGYEGU_BBOX_AREA = 0.5;
+    private static final List<String> DEFAULT_BOUNDARY_CACHE_LEVELS = List.of(
+            "SIDO",
+            "SIGUNGU",
+            "EUPMYEONDONG");
+    private static final Set<String> SUPPORTED_BOUNDARY_LEVELS = Set.of(
+            "SIDO",
+            "SIGUNGU",
+            "EUPMYEONDONG",
+            "JIPGYEGU");
     private static final String NAVIGATION_PROPERTIES_SQL = """
                             'parentAreaCode', (
                                 SELECT p.area_code
@@ -178,17 +196,32 @@ public class DashboardBoundaryService {
     private static final List<String> POPULATION_AGE_LABELS = List.of(
             "0-9", "10-19", "20-29", "30-39", "40-49", "50-59",
             "60-69", "70-79", "80-89", "90-99", "100+");
+    private static final List<BigDecimal> POPULATION_AGE_MIDPOINTS = List.of(
+            BigDecimal.valueOf(5), BigDecimal.valueOf(15), BigDecimal.valueOf(25),
+            BigDecimal.valueOf(35), BigDecimal.valueOf(45), BigDecimal.valueOf(55),
+            BigDecimal.valueOf(65), BigDecimal.valueOf(75), BigDecimal.valueOf(85),
+            BigDecimal.valueOf(95), BigDecimal.valueOf(105));
     private static final String EV_CHARGER_DATASET_CODE = "KECO_EV_CHARGER_MAIN";
     private static final String EV_CHARGER_COUNT_METRIC_CODE = "EV_CHARGER_COUNT";
+    private static final String AIRKOREA_AIR_QUALITY_DATASET_CODE = "AIRKOREA_AIR_QUALITY_MAIN";
+    private static final String KMA_VILAGE_FCST_DATASET_CODE = "KMA_VILAGE_FCST_MAIN";
+    private static final String KMA_TEMPERATURE_CATEGORY = "T1H";
+    private static final String MOIS_AVERAGE_AGE_DATASET_CODE = "MOIS_ADMM_AVG_AGE_MAIN";
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
     private final DashboardPopulationMapper populationMapper;
+    private final ConcurrentMap<String, String> areaBoundaryCache = new ConcurrentHashMap<>();
 
     public DashboardBoundaryService(
             NamedParameterJdbcTemplate jdbcTemplate,
             DashboardPopulationMapper populationMapper) {
         this.jdbcTemplate = jdbcTemplate;
         this.populationMapper = populationMapper;
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void warmAreaBoundaryCache() {
+        CompletableFuture.runAsync(() -> getAreaBoundaryCache(String.join(",", DEFAULT_BOUNDARY_CACHE_LEVELS)));
     }
 
     public String getAreaBoundaries(String level, String sidoCode, String parentAreaCode, String bbox) {
@@ -211,6 +244,114 @@ public class DashboardBoundaryService {
         }
 
         return getJipgyeguBoundaries(resolvedSidoCode, resolvedParentAreaCode, resolvedBbox);
+    }
+
+    public String getAreaBoundaryCache(String levels) {
+        List<String> resolvedLevels = resolveBoundaryCacheLevels(levels);
+        String cacheKey = String.join(",", resolvedLevels);
+        return areaBoundaryCache.computeIfAbsent(cacheKey, ignored -> queryAreaBoundaryCache(resolvedLevels));
+    }
+
+    private String queryAreaBoundaryCache(List<String> resolvedLevels) {
+        String sql = """
+                WITH features AS (
+                    SELECT
+                        c.level,
+                        c.area_code,
+                        jsonb_build_object(
+                            'type', 'Feature',
+                            'geometry', ST_AsGeoJSON(
+                                ST_Simplify(
+                                    b.geom,
+                                    CASE c.level
+                                        WHEN 'SIDO' THEN 0.01
+                                        WHEN 'SIGUNGU' THEN 0.005
+                                        WHEN 'EUPMYEONDONG' THEN 0.002
+                                        ELSE 0.001
+                                    END
+                                ),
+                                4
+                            )::jsonb,
+                            'properties', jsonb_build_object(
+                                'areaCode', c.area_code,
+                                'sidoCode', c.sido_code,
+                                'sigunguCode', c.sigungu_code,
+                                'eupmyeondongCode', c.eupmyeondong_code,
+                                'name', c.name,
+                                'fullName', c.full_name,
+                                'level', c.level,
+                                'parentAreaCode', p.area_code,
+                                'parentName', p.name,
+                                'parentAreaName', p.name,
+                                'parentFullName', p.full_name,
+                                'parentLevel', p.level,
+                                'childLevel', CASE c.level
+                                    WHEN 'SIDO' THEN 'SIGUNGU'
+                                    WHEN 'SIGUNGU' THEN 'EUPMYEONDONG'
+                                    WHEN 'EUPMYEONDONG' THEN 'JIPGYEGU'
+                                    ELSE NULL
+                                END,
+                                'canDrillDown', c.level != 'JIPGYEGU'
+                            )
+                        ) AS feature
+                    FROM public.sd_area_boundary b
+                    JOIN public.sd_area_code c
+                        ON c.area_code = b.area_code
+                    LEFT JOIN LATERAL (
+                        SELECT
+                            parent.area_code,
+                            parent.name,
+                            parent.full_name,
+                            parent.level
+                        FROM public.sd_area_code parent
+                        WHERE parent.is_active = TRUE
+                          AND (
+                              (
+                                  c.level = 'SIGUNGU'
+                                  AND parent.level = 'SIDO'
+                                  AND parent.sido_code = c.sido_code
+                              )
+                              OR (
+                                  c.level = 'EUPMYEONDONG'
+                                  AND parent.level = 'SIGUNGU'
+                                  AND parent.sido_code = c.sido_code
+                                  AND parent.sigungu_code = c.sigungu_code
+                              )
+                              OR (
+                                  c.level = 'JIPGYEGU'
+                                  AND parent.level = 'EUPMYEONDONG'
+                                  AND parent.sido_code = c.sido_code
+                                  AND parent.sigungu_code = c.sigungu_code
+                                  AND parent.eupmyeondong_code = c.eupmyeondong_code
+                              )
+                          )
+                        ORDER BY parent.area_code
+                        LIMIT 1
+                    ) p ON TRUE
+                    WHERE c.level IN (:levels)
+                      AND c.is_active = TRUE
+                      AND COALESCE(b.boundary_type, c.level) = c.level
+                      AND b.geom IS NOT NULL
+                ),
+                collections AS (
+                    SELECT
+                        level,
+                        jsonb_build_object(
+                            'type', 'FeatureCollection',
+                            'features', COALESCE(jsonb_agg(feature ORDER BY area_code), '[]'::jsonb)
+                        ) AS collection
+                    FROM features
+                    GROUP BY level
+                )
+                SELECT COALESCE(jsonb_object_agg(level, collection), '{}'::jsonb)::text
+                FROM collections
+                """;
+
+        String geoJsonByLevel = jdbcTemplate.queryForObject(
+                sql,
+                new MapSqlParameterSource("levels", resolvedLevels),
+                String.class);
+        return geoJsonByLevel == null ? "{}" : geoJsonByLevel;
     }
 
     public AreaNavigationResponse getAreaNavigation(String areaCode) {
@@ -727,6 +868,352 @@ public class DashboardBoundaryService {
                 .build();
     }
 
+    public Map<String, Object> getDashboardGisObservations(String datasetCode, String areaCode, int limit) {
+        String resolvedDatasetCode = normalizeRequired(datasetCode, "datasetCode는 필수입니다.");
+        String resolvedAreaCode = resolveOptionalAreaCode(areaCode);
+        int resolvedLimit = normalizeObservationLimit(limit);
+
+        List<Map<String, Object>> rows = findDashboardGisObservationRows(
+                resolvedDatasetCode,
+                resolvedAreaCode,
+                resolvedLimit);
+        if (rows.isEmpty() && resolvedAreaCode != null && MOIS_AVERAGE_AGE_DATASET_CODE.equals(resolvedDatasetCode)) {
+            rows = findAverageAgeFallbackRows(resolvedAreaCode);
+        }
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("datasetCode", resolvedDatasetCode);
+        response.put("areaCode", resolvedAreaCode);
+        response.put("areaFiltered", resolvedAreaCode != null);
+        response.put("fallbackToAll", false);
+        response.put("limit", resolvedLimit);
+        response.put("totalRowCount", rows.isEmpty() ? 0 : rows.get(0).get("totalRowCount"));
+        response.put("totalNumericValue", rows.isEmpty() ? BigDecimal.ZERO : rows.get(0).get("totalNumericValue"));
+        response.put("baseDate", rows.isEmpty() ? null : rows.get(0).get("baseDate"));
+        response.put("baseHour", rows.isEmpty() ? null : rows.get(0).get("baseHour"));
+        response.put("collectedAt", rows.isEmpty() ? null : rows.get(0).get("collectedAt"));
+        response.put("metricName", rows.isEmpty() ? null : rows.get(0).get("metricName"));
+        response.put("unit", rows.isEmpty() ? null : rows.get(0).get("unit"));
+        response.put("notice", rows.isEmpty() && resolvedAreaCode != null
+                ? "선택 지역 관측값이 없습니다."
+                : null);
+        response.put("items", rows);
+        return response;
+    }
+
+    private List<Map<String, Object>> findDashboardGisObservationRows(String datasetCode, String areaCode, int limit) {
+        Optional<AreaMeta> selectedAreaMeta = areaCode == null
+                ? Optional.empty()
+                : findOptionalAreaMeta(areaCode);
+        Set<String> scopeAreaCodes = areaCode == null
+                ? Set.of()
+                : dashboardObservationScopeAreaCodes(areaCode, selectedAreaMeta.orElse(null));
+        String selectedAreaLabel = AIRKOREA_AIR_QUALITY_DATASET_CODE.equals(datasetCode)
+                ? selectedAreaMeta.map(this::displayAreaName).orElse(null)
+                : null;
+        String metricFilter = KMA_VILAGE_FCST_DATASET_CODE.equals(datasetCode)
+                ? "AND o.dimensions ->> 'category' = :kmaTemperatureCategory"
+                : "";
+        String areaFilter = areaCode == null ? "" : """
+                  AND (
+                      o.area_code = :areaCode
+                      OR o.source_area_code = :areaCode
+                      OR (
+                          o.dataset_code IN ('KMA_VILAGE_FCST_MAIN', 'AIRKOREA_AIR_QUALITY_MAIN')
+                          AND o.area_code IN (:scopeAreaCodes)
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM public.sd_area_code selected_area
+                          JOIN public.sd_area_code observation_area
+                              ON observation_area.area_code = o.area_code
+                          WHERE selected_area.area_code = :areaCode
+                            AND selected_area.sido_code = observation_area.sido_code
+                            AND (
+                                NULLIF(NULLIF(observation_area.sigungu_code, ''), '00000') IS NULL
+                                OR selected_area.level = 'SIDO'
+                                OR selected_area.sigungu_code = observation_area.sigungu_code
+                            )
+                            AND (
+                                NULLIF(NULLIF(observation_area.eupmyeondong_code, ''), '00000000') IS NULL
+                                OR selected_area.level IN ('SIDO', 'SIGUNGU')
+                                OR selected_area.eupmyeondong_code = observation_area.eupmyeondong_code
+                            )
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM public.sd_area_code selected_area
+                          LEFT JOIN public.sd_area_admin_legal_mapping legal_mapping
+                              ON legal_mapping.legal_area_code = selected_area.area_code
+                             AND legal_mapping.source_code = 'KOSIS_LEGAL_ADMIN_LINK'
+                          WHERE selected_area.area_code = :areaCode
+                            AND (
+                                (
+                                    legal_mapping.admin_area_code IS NOT NULL
+                                    AND o.source_area_code = legal_mapping.admin_area_code
+                                )
+                                OR (
+                                    selected_area.level = 'SIDO'
+                                    AND o.source_area_code LIKE selected_area.sido_code || '%%'
+                                )
+                                OR (
+                                    selected_area.level = 'SIGUNGU'
+                                    AND o.source_area_code LIKE selected_area.sigungu_code || '%%'
+                                )
+                            )
+                      )
+                  )
+                """;
+        String sql = """
+                WITH scoped_rows AS (
+                    SELECT
+                        o.area_observation_id,
+                        o.dataset_code,
+                        o.metric_code,
+                        o.area_code,
+                        o.area_level,
+                        o.source_area_code,
+                        o.source_area_name,
+                        o.grid_x,
+                        o.grid_y,
+                        o.base_date,
+                        o.base_hour,
+                        o.observed_at,
+                        o.numeric_value,
+                        o.text_value,
+                        o.json_value,
+                        o.raw_payload,
+                        o.unit,
+                        o.dimensions,
+                        o.created_at,
+                        d.dataset_name,
+                        m.metric_name,
+                        m.unit AS metric_unit,
+                        c.name AS area_name,
+                        c.full_name AS full_name
+                    FROM public.sd_dashboard_area_observation o
+                    JOIN public.sd_dashboard_dataset d
+                        ON d.dataset_code = o.dataset_code
+                    LEFT JOIN public.sd_dashboard_metric m
+                        ON m.dataset_code = o.dataset_code
+                       AND m.metric_code = o.metric_code
+                    LEFT JOIN public.sd_area_code c
+                        ON c.area_code = o.area_code
+                    WHERE o.dataset_code = :datasetCode
+                      AND o.numeric_value IS NOT NULL
+                      %s
+                      %s
+                ),
+                latest_key AS (
+                    SELECT base_date, COALESCE(base_hour, '') AS base_hour
+                    FROM scoped_rows
+                    ORDER BY base_date DESC, COALESCE(base_hour, '') DESC, created_at DESC
+                    LIMIT 1
+                ),
+                ranked_rows AS (
+                    SELECT
+                        sr.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY
+                                CASE
+                                    WHEN sr.dataset_code = 'AIRKOREA_AIR_QUALITY_MAIN'
+                                        THEN COALESCE(NULLIF(sr.source_area_code, ''), NULLIF(sr.area_code, ''), sr.area_observation_id::text)
+                                    ELSE '__latest_key__'
+                                END
+                            ORDER BY
+                                COALESCE(sr.observed_at, sr.created_at) DESC,
+                                sr.base_date DESC,
+                                COALESCE(sr.base_hour, '') DESC,
+                                sr.area_observation_id DESC
+                        ) AS recency_rank
+                    FROM scoped_rows sr
+                ),
+                latest_rows AS (
+                    SELECT
+                        sr.*,
+                        COALESCE(
+                            CASE
+                                WHEN sr.dataset_code = 'AIRKOREA_AIR_QUALITY_MAIN'
+                                    THEN NULLIF(:selectedAreaLabel, '')
+                                ELSE NULL
+                            END,
+                            CASE
+                                WHEN sr.source_area_code LIKE 'KMA:%%'
+                                    THEN COALESCE(NULLIF(sr.dimensions ->> 'metricLabel', ''), NULLIF(sr.dimensions ->> 'category', ''))
+                                ELSE NULL
+                            END,
+                            NULLIF(sr.dimensions ->> 'stationName', ''),
+                            NULLIF(sr.full_name, ''),
+                            NULLIF(sr.area_name, ''),
+                            NULLIF(sr.raw_payload ->> 'dongNm', ''),
+                            NULLIF(sr.raw_payload ->> 'emdNm', ''),
+                            NULLIF(sr.source_area_name, ''),
+                            NULLIF(sr.dimensions ->> 'category', ''),
+                            NULLIF(CONCAT_WS('/', NULLIF(sr.grid_x, ''), NULLIF(sr.grid_y, '')), ''),
+                            NULLIF(REPLACE(REPLACE(sr.source_area_code, 'AIR:', ''), 'KMA:', ''), ''),
+                            '미분류'
+                        ) AS display_label,
+                        COALESCE(
+                            CASE sr.dataset_code
+                                WHEN 'MOIS_ADMM_HSMB_HH_MAIN' THEN '총 세대수'
+                                WHEN 'MOIS_ADMM_AVG_AGE_MAIN' THEN '전체 평균연령'
+                                WHEN 'MOIS_ADMM_POP_CHANGE_MAIN' THEN '전체 인구증감'
+                                ELSE NULL
+                            END,
+                            NULLIF(sr.dimensions ->> 'metricLabel', ''),
+                            NULLIF(sr.dimensions ->> 'category', ''),
+                            NULLIF(sr.metric_name, ''),
+                            sr.metric_code
+                        ) AS display_metric_name,
+                        CASE
+                            WHEN sr.dataset_code = 'KMA_VILAGE_FCST_MAIN' THEN NULLIF(sr.unit, '')
+                            ELSE COALESCE(NULLIF(sr.unit, ''), NULLIF(sr.metric_unit, ''))
+                        END AS display_unit,
+                        COUNT(*) OVER () AS total_row_count,
+                        COALESCE(SUM(sr.numeric_value) OVER (), 0) AS total_numeric_value,
+                        MAX(COALESCE(sr.observed_at, sr.created_at)) OVER () AS collected_at
+                    FROM ranked_rows sr
+                    LEFT JOIN latest_key lk
+                        ON lk.base_date = sr.base_date
+                       AND lk.base_hour = COALESCE(sr.base_hour, '')
+                    WHERE (
+                            sr.dataset_code = 'AIRKOREA_AIR_QUALITY_MAIN'
+                            AND sr.recency_rank = 1
+                        )
+                       OR (
+                            sr.dataset_code <> 'AIRKOREA_AIR_QUALITY_MAIN'
+                            AND lk.base_date IS NOT NULL
+                        )
+                )
+                SELECT
+                    dataset_code,
+                    dataset_name,
+                    metric_code,
+                    display_metric_name AS metric_name,
+                    area_code,
+                    area_level,
+                    source_area_code,
+                    display_label AS label,
+                    base_date,
+                    base_hour,
+                    collected_at,
+                    numeric_value,
+                    display_unit AS unit,
+                    total_row_count,
+                    total_numeric_value
+                FROM latest_rows
+                ORDER BY numeric_value DESC NULLS LAST, label
+                LIMIT :limit
+                """.formatted(metricFilter, areaFilter);
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("datasetCode", datasetCode)
+                .addValue("limit", limit)
+                .addValue("selectedAreaLabel", selectedAreaLabel);
+        if (KMA_VILAGE_FCST_DATASET_CODE.equals(datasetCode)) {
+            params.addValue("kmaTemperatureCategory", KMA_TEMPERATURE_CATEGORY);
+        }
+        if (areaCode != null) {
+            params.addValue("areaCode", areaCode);
+            params.addValue("scopeAreaCodes", scopeAreaCodes);
+        }
+
+        return jdbcTemplate.query(sql, params, (rs, rowNum) -> mapObservationRow(rs));
+    }
+
+    private Optional<AreaMeta> findOptionalAreaMeta(String areaCode) {
+        try {
+            return Optional.of(findAreaMeta(resolveAreaCode(areaCode)));
+        } catch (ResponseStatusException ignored) {
+            return Optional.empty();
+        }
+    }
+
+    private String displayAreaName(AreaMeta areaMeta) {
+        if (areaMeta.fullName() != null && !areaMeta.fullName().isBlank()) {
+            return areaMeta.fullName();
+        }
+        return areaMeta.name();
+    }
+
+    private Set<String> dashboardObservationScopeAreaCodes(String areaCode, AreaMeta knownAreaMeta) {
+        LinkedHashSet<String> scopeAreaCodes = new LinkedHashSet<>();
+        if (areaCode == null || areaCode.isBlank()) {
+            return scopeAreaCodes;
+        }
+        scopeAreaCodes.add(areaCode);
+        try {
+            AreaMeta areaMeta = knownAreaMeta != null ? knownAreaMeta : findAreaMeta(resolveAreaCode(areaCode));
+            addIfPresent(scopeAreaCodes, areaMeta.areaCode());
+            addIfPresent(scopeAreaCodes, composeAreaCode(areaMeta.sidoCode(), "00000000"));
+            addIfPresent(scopeAreaCodes, composeAreaCode(areaMeta.sigunguCode(), "00000"));
+            addIfPresent(scopeAreaCodes, composeAreaCode(areaMeta.eupmyeondongCode(), "00"));
+            findParentAreaMeta(areaMeta).ifPresent(parentArea -> addIfPresent(scopeAreaCodes, parentArea.areaCode()));
+        } catch (ResponseStatusException ignored) {
+            // If an external code cannot be resolved, keep exact-code matching only.
+        }
+        return scopeAreaCodes;
+    }
+
+    private String composeAreaCode(String codePrefix, String suffix) {
+        if (codePrefix == null || codePrefix.isBlank()) {
+            return null;
+        }
+        return codePrefix + suffix;
+    }
+
+    private void addIfPresent(Set<String> values, String value) {
+        if (value != null && !value.isBlank()) {
+            values.add(value);
+        }
+    }
+
+    private List<Map<String, Object>> findAverageAgeFallbackRows(String areaCode) {
+        try {
+            AreaMeta areaMeta = findAreaMeta(areaCode);
+            AreaPopulationChartResponse population = getAreaPopulation(areaCode, areaMeta.level(), null, "00");
+            BigDecimal weightedTotal = BigDecimal.ZERO;
+            BigDecimal populationTotal = BigDecimal.ZERO;
+            List<PopulationChartDataset> datasets = population.getDatasets() == null
+                    ? List.of()
+                    : population.getDatasets();
+
+            for (PopulationChartDataset dataset : datasets) {
+                List<BigDecimal> values = dataset.getData() == null ? List.of() : dataset.getData();
+                for (int index = 0; index < values.size() && index < POPULATION_AGE_MIDPOINTS.size(); index++) {
+                    BigDecimal count = values.get(index) == null ? BigDecimal.ZERO : values.get(index);
+                    weightedTotal = weightedTotal.add(count.multiply(POPULATION_AGE_MIDPOINTS.get(index)));
+                    populationTotal = populationTotal.add(count);
+                }
+            }
+
+            if (populationTotal.compareTo(BigDecimal.ZERO) <= 0) {
+                return List.of();
+            }
+
+            BigDecimal averageAge = weightedTotal.divide(populationTotal, 1, RoundingMode.HALF_UP);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("datasetCode", MOIS_AVERAGE_AGE_DATASET_CODE);
+            row.put("datasetName", "성별 주민등록 평균연령");
+            row.put("metricCode", "METRIC_001");
+            row.put("metricName", "전체 평균연령");
+            row.put("areaCode", population.getAreaCode());
+            row.put("areaLevel", areaMeta.level());
+            row.put("sourceAreaCode", areaCode);
+            row.put("label", population.getFullName() != null ? population.getFullName() : population.getAreaName());
+            row.put("baseDate", population.getBaseDate());
+            row.put("baseHour", population.getHour());
+            row.put("collectedAt", null);
+            row.put("value", averageAge);
+            row.put("unit", "세");
+            row.put("totalRowCount", 1L);
+            row.put("totalNumericValue", averageAge);
+            return List.of(row);
+        } catch (ResponseStatusException exception) {
+            return List.of();
+        }
+    }
+
     private String getSidoBoundaries(String sidoCode, Bbox bbox) {
         String cachedGeoJson = getCachedSidoBoundaries(sidoCode, bbox);
         if (!isEmptyFeatureCollection(cachedGeoJson)) {
@@ -1089,6 +1576,30 @@ public class DashboardBoundaryService {
         }
 
         return jdbcTemplate.queryForObject(sql, params, String.class);
+    }
+
+    private List<String> resolveBoundaryCacheLevels(String levels) {
+        if (levels == null || levels.isBlank()) {
+            return DEFAULT_BOUNDARY_CACHE_LEVELS;
+        }
+
+        List<String> resolvedLevels = new ArrayList<>();
+        for (String token : levels.split(",")) {
+            String resolvedLevel = token.trim().toUpperCase();
+            if (resolvedLevel.isBlank()) {
+                continue;
+            }
+            if (!SUPPORTED_BOUNDARY_LEVELS.contains(resolvedLevel)) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "levels는 SIDO, SIGUNGU, EUPMYEONDONG, JIPGYEGU 중 하나 이상이어야 합니다.");
+            }
+            if (!resolvedLevels.contains(resolvedLevel)) {
+                resolvedLevels.add(resolvedLevel);
+            }
+        }
+
+        return resolvedLevels.isEmpty() ? DEFAULT_BOUNDARY_CACHE_LEVELS : resolvedLevels;
     }
 
     private String resolveLevel(String level) {
@@ -1637,6 +2148,13 @@ public class DashboardBoundaryService {
         return Math.min(limit, 1000);
     }
 
+    private int normalizeObservationLimit(int limit) {
+        if (limit < 1) {
+            return 12;
+        }
+        return Math.min(limit, 50);
+    }
+
     private DashboardGisDataSourceResponse mapDashboardGisDataSource(ResultSet rs) throws SQLException {
         return DashboardGisDataSourceResponse.builder()
                 .sourceCode(rs.getString("source_code"))
@@ -1712,6 +2230,26 @@ public class DashboardBoundaryService {
                 rs.getObject("collected_at", LocalDateTime.class),
                 rs.getBigDecimal("numeric_value"),
                 rs.getBigDecimal("total_count"));
+    }
+
+    private Map<String, Object> mapObservationRow(ResultSet rs) throws SQLException {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("datasetCode", rs.getString("dataset_code"));
+        row.put("datasetName", rs.getString("dataset_name"));
+        row.put("metricCode", rs.getString("metric_code"));
+        row.put("metricName", rs.getString("metric_name"));
+        row.put("areaCode", rs.getString("area_code"));
+        row.put("areaLevel", rs.getString("area_level"));
+        row.put("sourceAreaCode", rs.getString("source_area_code"));
+        row.put("label", rs.getString("label"));
+        row.put("baseDate", rs.getObject("base_date", LocalDate.class));
+        row.put("baseHour", rs.getString("base_hour"));
+        row.put("collectedAt", rs.getObject("collected_at", LocalDateTime.class));
+        row.put("value", rs.getBigDecimal("numeric_value"));
+        row.put("unit", rs.getString("unit"));
+        row.put("totalRowCount", rs.getLong("total_row_count"));
+        row.put("totalNumericValue", rs.getBigDecimal("total_numeric_value"));
+        return row;
     }
 
     private Integer nullableInt(ResultSet rs, String column) throws SQLException {

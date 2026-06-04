@@ -119,6 +119,12 @@ public class DataCollectController {
         return ResponseEntity.ok(dashboardGisOpenApiCollectService.collectEvChargerRegionStats());
     }
 
+    // 법정동 기반 MOIS 대시보드 관측값에서 과거 행정동/상위 집계 잔여 데이터를 제거합니다.
+    @RequestMapping(value = "/dashboard-gis/mois-legal-dong/cleanup", method = {RequestMethod.GET, RequestMethod.POST})
+    public ResponseEntity<Map<String, Object>> cleanupMoisLegalDongObservations() {
+        return ResponseEntity.ok(dashboardGisOpenApiCollectService.cleanupMoisLegalDongObservations());
+    }
+
     // 현재 공통 저장 테이블 기준으로 데이터셋별 수집 완료/미완료 상태를 확인합니다.
     @GetMapping("/dashboard-gis/collect/status")
     public ResponseEntity<Map<String, Object>> getDashboardGisCollectStatus() {

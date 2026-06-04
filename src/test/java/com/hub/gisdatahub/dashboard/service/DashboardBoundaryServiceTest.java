@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
@@ -241,6 +242,53 @@ class DashboardBoundaryServiceTest {
         verify(populationMapper).findAreaPopulation("1101053010001", "JIPGYEGU", null, null);
         assertThat(response.getAreaCode()).isEqualTo("1101053010001");
         assertThat(response.getFullName()).isEqualTo("서울특별시 종로구 사직동 집계구");
+    }
+
+    @Test
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    void getDashboardGisObservationsFiltersKmaWeatherToTemperature() {
+        when(jdbcTemplate.query(anyString(), any(MapSqlParameterSource.class), any(RowMapper.class)))
+                .thenReturn(List.of());
+
+        service.getDashboardGisObservations("KMA_VILAGE_FCST_MAIN", null, 10);
+
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<MapSqlParameterSource> paramsCaptor = ArgumentCaptor.forClass(MapSqlParameterSource.class);
+        verify(jdbcTemplate).query(sqlCaptor.capture(), paramsCaptor.capture(), any(RowMapper.class));
+
+        assertThat(sqlCaptor.getValue()).contains("o.dimensions ->> 'category' = :kmaTemperatureCategory");
+        assertThat(paramsCaptor.getValue().getValue("kmaTemperatureCategory")).isEqualTo("T1H");
+    }
+
+    @Test
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    void getDashboardGisObservationsUsesSelectedAreaLabelForAirKorea() throws SQLException {
+        whenAreaMetaQueriesReturn(
+                Map.of(
+                        "area_code", "4420000000",
+                        "sido_code", "44",
+                        "sigungu_code", "44200",
+                        "eupmyeondong_code", "44200000",
+                        "name", "아산시",
+                        "full_name", "충청남도 아산시",
+                        "level", "SIGUNGU"),
+                Map.of(
+                        "area_code", "4400000000",
+                        "sido_code", "44",
+                        "sigungu_code", "44000",
+                        "eupmyeondong_code", "44000000",
+                        "name", "충청남도",
+                        "full_name", "충청남도",
+                        "level", "SIDO"));
+
+        service.getDashboardGisObservations("AIRKOREA_AIR_QUALITY_MAIN", "4420000000", 10);
+
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<MapSqlParameterSource> paramsCaptor = ArgumentCaptor.forClass(MapSqlParameterSource.class);
+        verify(jdbcTemplate, times(3)).query(sqlCaptor.capture(), paramsCaptor.capture(), any(RowMapper.class));
+
+        assertThat(sqlCaptor.getAllValues().get(2)).contains("NULLIF(:selectedAreaLabel, '')");
+        assertThat(paramsCaptor.getAllValues().get(2).getValue("selectedAreaLabel")).isEqualTo("충청남도 아산시");
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
