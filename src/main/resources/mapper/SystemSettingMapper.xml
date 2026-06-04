@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.hub.gisdatahub.admin.mapper.SystemSettingMapper">
+
+    <insert id="insertSystemSettingConfigLog">
+
+        INSERT INTO sd_system_setting_config_log (
+            admin_user_id,
+            setting_key,
+            before_value,
+            after_value,
+            description
+        )
+        VALUES (
+            #{adminUserId},
+            #{settingKey},
+            #{beforeValue},
+            #{afterValue},
+            #{description}
+        )
+
+    </insert>
+
+</mapper>

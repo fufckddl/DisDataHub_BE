@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.hub.gisdatahub.admin.mapper.AdminUserMapper">
+
+<select id="selectUserManagementTypeList">
+    SELECT
+        type_id,
+        type_code,
+        type_name,
+        target_role,
+        duration_days,
+        created_at
+    FROM sd_user_management_type
+</select>
+
+<insert id="insertUserManagementLog">
+    INSERT INTO sd_user_management_log (
+        admin_user_id,
+        target_user_id,
+        type_id,
+        description
+    ) value (
+        #{adminUserId},
+        #{targetUserId},
+        #{typeId},
+        #{descript}
+    )
+</insert>
+
+</mapper>
