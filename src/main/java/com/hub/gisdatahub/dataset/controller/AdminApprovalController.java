@@ -17,6 +17,9 @@ import com.hub.gisdatahub.dataset.dto.AdminApprovalResponseDto;
 import com.hub.gisdatahub.dataset.dto.AdminRejectRequestDto;
 import com.hub.gisdatahub.dataset.dto.MapFeatureDto;
 import com.hub.gisdatahub.dataset.service.AdminApprovalService;
+import com.hub.gisdatahub.user.domain.User;
+import com.hub.gisdatahub.user.service.UserService;
+import com.hub.gisdatahub.user.type.UserRole;
 
 @RestController
 @RequestMapping("/api/admin")
@@ -25,17 +28,33 @@ public class AdminApprovalController {
     @Autowired
     private AdminApprovalService adminApprovalService;
 
+    @Autowired
+    private UserService userService;
+
+    private boolean isAdmin(Authentication authentication) {
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return false;
+        }
+        try {
+            int userId = Integer.parseInt((String) authentication.getPrincipal());
+            User user = userService.getMe(userId);
+            return user.getRole() == UserRole.ADMIN;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     // 업로드 요청 리스트 조회
     @GetMapping("/approvals")
     public ResponseEntity<?> getPendingApprovals(Authentication authentication) {
         System.out.println("[관리자 컨트롤러] 승인 대기 목록 요청이 접수되었습니다.");
 
-        // 1. 로그인 여부만 가볍게 확인 (토큰이 잘 넘어왔는지만 체크)
-        if (authentication == null || !authentication.isAuthenticated()) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("로그인이 필요합니다.");
+        if (!isAdmin(authentication)) {
+            System.err.println("🚨 삐빅! 관리자가 아닌 유저의 불법 접근 시도 차단!");
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("관리자만 접근할 수 있는 메뉴입니다.");
         }
 
-        // 2. 접속 유저 PK 식별 (권한 검사는 생략하고 식별만 합니다!)
+        // 2. 접속 유저 PK 식별
         // 나중에 데이터 승인/반려 시 approved_by에 넣을 아주 중요한 데이터입니다.
         int adminUserId = Integer.parseInt((String) authentication.getPrincipal());
         System.out.println("[신분 확인] 현재 접속한 유저 (user_id): " + adminUserId);
