@@ -33,14 +33,15 @@ public interface DatasetDownloadMapper {
     public DatasetStatDto findDatasetStatById(Long datasetId);
 
 
-    // 조회수, 다운로드 증가
+    // 조회수
     public void increaseViewCount(Long datasetId);
-    public void increaseDownloadCount(Long datasetId);
-
+    
     // 조회 로그 생성
     public void insertViewLog(DatasetViewLogDto viewLogDto);
-    // 다운로드 로그 생성
-    public void insertDownloadLog(DownloadLogDto downloadLogDto);
+
+    // 
+    public String findCategoryNameByDatasetId(Long datasetId);
+
     
     // 조회 로그 중복 생성 방지용
     // 로그인한 사용자
@@ -72,4 +73,8 @@ public interface DatasetDownloadMapper {
     public String findDatasetExportGeoJson(Long datasetId);
     
     public List<DatasetFeatureExportDto> findDatasetFeaturesForExport(Long datasetId);
+    // 다운로드 수 증가
+    public void increaseDownloadCount(Long datasetId);
+    // 다운로드 로그 생성
+    public void insertDownloadLog(DownloadLogDto downloadLogDto);    
 }

@@ -1,5 +1,6 @@
 package com.hub.gisdatahub.download.service;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -10,6 +11,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -24,7 +28,10 @@ import com.hub.gisdatahub.download.dto.DownloadDatasetDetailDto;
 import com.hub.gisdatahub.download.dto.DownloadDatasetFileDto;
 import com.hub.gisdatahub.download.dto.DownloadDatasetListItemDto;
 import com.hub.gisdatahub.download.dto.DownloadExportResultDto;
+import com.hub.gisdatahub.download.dto.DownloadLogDto;
 import com.hub.gisdatahub.download.mapper.DatasetDownloadMapper;
+import com.hub.gisdatahub.s3.dto.S3DownloadResult;
+import com.hub.gisdatahub.s3.service.S3FileService;
 import com.hub.gisdatahub.user.mapper.UserMapper;
 
 @Service
@@ -32,11 +39,16 @@ public class DatasetDownloadService {
 
     private final DatasetDownloadMapper datasetDownloadMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final S3FileService s3FileService;
 
-    public DatasetDownloadService(DatasetDownloadMapper datasetDownloadMapper, UserMapper userMapper) {
+    public DatasetDownloadService(
+            DatasetDownloadMapper datasetDownloadMapper,
+            UserMapper userMapper,
+            S3FileService s3FileService
+    ) {
         this.datasetDownloadMapper = datasetDownloadMapper;
+        this.s3FileService = s3FileService;
     }
-
 
     // 메인페이지 데이터셋 목록
     public List<DownloadDatasetListItemDto> getApprovedDownloadDatasetList() {
@@ -45,11 +57,11 @@ public class DatasetDownloadService {
 
     public DatasetDownloadPageDto getDatasetDownloadPage(Long datasetId, Integer userId, String viewIp) {
         DownloadDatasetDetailDto dataset = datasetDownloadMapper.findDatasetDetailById(datasetId);
-        
+
         if (dataset == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "데이터셋을 찾을 수 없습니다.");
         }
-        
+
         validateDatasetDetailAccess(dataset, userId);
 
         DatasetViewLogDto viewLogDto = new DatasetViewLogDto();
@@ -60,7 +72,6 @@ public class DatasetDownloadService {
         // 조회 로그 생성, 조회 수 증가
         recordDatasetView(viewLogDto);
 
-        
         DatasetStatDto stats = datasetDownloadMapper.findDatasetStatById(datasetId);
         if (stats == null) {
             stats = new DatasetStatDto();
@@ -75,29 +86,26 @@ public class DatasetDownloadService {
         response.setDataset(dataset);
         response.setSourceFile(sourceFile);
         response.setStats(stats);
-        // response.setAvailableFormats(List.of("CSV", "GeoJSON", "SHP", "GeoTIFF","KML"));
-        response.setAvailableFormats(List.of("CSV", "GeoJSON", "SHP", "KML"));
+        response.setAvailableFormats(List.of("CSV", "GeoJSON", "SHP", "XLSX", "TIFF"));
 
         return response;
     }
 
     private void validateDatasetDetailAccess(DownloadDatasetDetailDto dataset, Integer userId) {
-        // 공개 데이터셋일 경우 
         if (Boolean.TRUE.equals(dataset.getIsPublic())) {
-            return;  // 그냥 통과
+            return;
         }
-        //  로그인을 하지 않았을경우
+
         if (userId == null) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "비공개 데이터셋은 로그인 후 접근할 수 있습니다.");
         }
 
-        // 소속기관 갖고오기
         String userOrganization = datasetDownloadMapper.findUserOrganization(userId);
         String datasetOwnerOrganization = datasetDownloadMapper.findDatasetOwnerOrganization(dataset.getDatasetId());
 
         if (!Objects.equals(normalize(userOrganization), normalize(datasetOwnerOrganization))) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "동일 소속기관 사용자만 접근할 수 있습니다.");
-        }        
+        }
     }
 
     private String normalize(String value) {
@@ -108,14 +116,13 @@ public class DatasetDownloadService {
     }
 
     // 조회 로그 생성
-    public void recordDatasetView(DatasetViewLogDto viewLogDto){
+    public void recordDatasetView(DatasetViewLogDto viewLogDto) {
         boolean duplicate = isDuplicateView(
-            viewLogDto.getDatasetId(),
-            viewLogDto.getUserId(),
-            viewLogDto.getViewIp()
+                viewLogDto.getDatasetId(),
+                viewLogDto.getUserId(),
+                viewLogDto.getViewIp()
         );
 
-        //  이미 최근 조회한 기록이 있다면 로그 추가, 조회수 증가 하지 않음
         if (duplicate) {
             return;
         }
@@ -125,91 +132,165 @@ public class DatasetDownloadService {
     }
 
     // 조회 로그, 조회수 중복 방지용 메서드
-    private boolean isDuplicateView(Long datasetId, Integer userId, String viewIp){
-        LocalDateTime fromTime = LocalDateTime.now().minusMinutes(5); // 중복 방지 범위 시간 지정 현재는 5분
+    private boolean isDuplicateView(Long datasetId, Integer userId, String viewIp) {
+        LocalDateTime fromTime = LocalDateTime.now().minusMinutes(5);
 
         if (userId != null) {
             Integer recentCount = datasetDownloadMapper.countRecentViewByUser(datasetId, userId, fromTime);
             return recentCount != null && recentCount > 0;
         }
-        
+
         Integer recentCount = datasetDownloadMapper.countRecentViewByIp(datasetId, viewIp, fromTime);
         return recentCount != null && recentCount > 0;
-        
     }
 
-    // 업로드자의 소속기관, 사용자 소속기관 비교
-    public boolean hasSameOrganization(Integer userId, Long datasetId){
+    // 업로더의 소속기관과 사용자의 소속기관 비교
+    public boolean hasSameOrganization(Integer userId, Long datasetId) {
         String userOrganization = datasetDownloadMapper.findUserOrganization(userId);
-        String uploderOrganization = datasetDownloadMapper.findDatasetOwnerOrganization(datasetId);
+        String uploaderOrganization = datasetDownloadMapper.findDatasetOwnerOrganization(datasetId);
 
         boolean result = true;
-        if(!userOrganization.equals(uploderOrganization)) result = false;
+        if (!userOrganization.equals(uploaderOrganization)) {
+            result = false;
+        }
 
         return result;
     }
 
-    //  공간 데이터 갖고오기
-    public String getDatasetPreviewGeoJson(Long datasetId, Integer userId){
+    // 공간 데이터 미리보기 가져오기
+    public String getDatasetPreviewGeoJson(Long datasetId, Integer userId) {
         DownloadDatasetDetailDto datasetDto = datasetDownloadMapper.findDatasetDetailById(datasetId);
 
-        if(datasetDto == null){
+        if (datasetDto == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "데이터셋을 찾을 수 없습니다.");
         }
 
         validateDatasetDetailAccess(datasetDto, userId);
 
         String geoJson = datasetDownloadMapper.findDatasetPreviewGeoJson(datasetId);
-        
-        // 지도 데이터 없으면 빈 FeatureCollection 반환
+
         return geoJson != null ? geoJson : "{\"type\":\"FeatureCollection\",\"features\":[]}";
     }
 
-// 다운로드 파일 변환 과정
+    // 다운로드 파일 변환 과정
     public DownloadExportResultDto downloadDatasetByFormat(
-        Long datasetId,
-        String format,
-        Integer userId,
-        String downloadIp
-    ){
-        // 1. dataset 존재 확인
+            Long datasetId,
+            String format,
+            Integer userId,
+            String downloadIp
+    ) {
         DownloadDatasetDetailDto dataset = datasetDownloadMapper.findDatasetDetailById(datasetId);
         if (dataset == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "데이터셋을 찾을 수 없습니다.");
         }
 
-        // 2. 상세와 동일한 권한 정책 사용
         validateDatasetDetailAccess(dataset, userId);
 
-        // 3. format 정규화
-        String normalizedFormat = format == null ? "" : format.trim().toUpperCase(Locale.ROOT);
-
-        // 4. 형식별 파일 생성
-        DownloadExportResultDto result;
-        switch (normalizedFormat) {
-            case "CSV":
-                result = exportCsv(datasetId, dataset.getTitle());
-                break;
-            case "GEOJSON":
-                result = exportGeoJson(datasetId, dataset.getTitle());
-                break;
-            case "KML":
-                result = exportKml(datasetId, dataset.getTitle());
-                break;
-            case "SHP":
-                // SHP는 1차에선 구조만 잡고, 실제 구현은 GeoTools 같은 라이브러리 연동이 필요
-                throw new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED, "SHP 다운로드는 준비 중입니다.");
-            default:
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "지원하지 않는 형식입니다.");
+        DownloadDatasetFileDto sourceFile = datasetDownloadMapper.findSourceFileByDatasetId(datasetId);
+        if (sourceFile == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "원본 파일 정보를 찾을 수 없습니다.");
         }
 
-        // 5. 파일 생성이 성공했을 때만 다운로드 로그/다운로드 수 증가
-        // TODO: insertDownloadLog(...) + increaseDownloadCount(...)
+        String normalizedFormat = format == null ? "" : format.trim().toUpperCase(Locale.ROOT);
+        String originalFormat = normalizeSourceFormat(sourceFile.getFileExtension());
 
-        return result;        
+        DownloadExportResultDto result;
+
+        // 업로드된 원본 형식과 같으면 S3 원본 파일 다운로드
+        if (normalizedFormat.equals(originalFormat)) {
+            result = downloadOriginalFileFromS3(sourceFile);
+        } else {
+            // 원본 형식이 아니면 현재 구현된 변환 형식으로 다운로드
+            switch (normalizedFormat) {
+                case "CSV":
+                    result = exportCsv(datasetId, dataset.getTitle());
+                    break;
+                case "GEOJSON":
+                    result = exportGeoJson(datasetId, dataset.getTitle());
+                    break;
+                case "SHP":
+                    throw new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED, "SHP 형식 변환 다운로드는 준비 중입니다.");
+                case "XLSX":
+                    result = exportXlsx(datasetId, dataset.getTitle());
+                    break;
+                default:
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "지원하지 않는 형식입니다.");
+            }
+        }
+
+        recordDownloadSuccess(datasetId, sourceFile, userId, normalizedFormat, downloadIp);
+        return result;
     }
 
-    // CSV
+    // 원본 파일 확장자를 버튼 형식과 비교하기 쉬운 형태로 맞춤
+    private String normalizeSourceFormat(String fileExtension) {
+        if (fileExtension == null || fileExtension.isBlank()) {
+            return "";
+        }
+
+        String ext = fileExtension.trim().toUpperCase(Locale.ROOT);
+
+        if (ext.startsWith(".")) {
+            ext = ext.substring(1);
+        }
+
+        if ("JSON".equals(ext)) {
+            return "GEOJSON";
+        }
+
+        // SHP는 zip 묶음으로 저장될 수 있으므로 SHP 버튼과 연결
+        if ("ZIP".equals(ext)) {
+            return "SHP";
+        }
+
+        // xls도 같은 엑셀 형식으로 취급
+        if ("XLS".equals(ext)) {
+            return "XLSX";
+        }
+
+        if ("TIF".equals(ext)) {
+            return "TIFF";
+        }
+
+        return ext;
+    }
+
+    private DownloadExportResultDto downloadOriginalFileFromS3(DownloadDatasetFileDto sourceFile) {
+        S3DownloadResult result = s3FileService.downloadFile(
+                sourceFile.getFilePath(),
+                sourceFile.getStoredFilename(),
+                sourceFile.getOriginalFilename()
+        );
+
+        byte[] bytes = result.resource().getByteArray();
+
+        return new DownloadExportResultDto(
+                result.fileName(),
+                result.contentType(),
+                bytes
+        );
+    }
+
+    private void recordDownloadSuccess(
+            Long datasetId,
+            DownloadDatasetFileDto sourceFile,
+            Integer userId,
+            String format,
+            String downloadIp
+    ) {
+        DownloadLogDto logDto = new DownloadLogDto();
+        logDto.setDatasetId(datasetId);
+        logDto.setFileId(sourceFile.getFileId());
+        logDto.setUserId(userId);
+        logDto.setDownloadFormat(format);
+        logDto.setDownloadStatus("SUCCESS");
+        logDto.setErrorMessage(null);
+        logDto.setDownloadIp(downloadIp);
+
+        datasetDownloadMapper.insertDownloadLog(logDto);
+        datasetDownloadMapper.increaseDownloadCount(datasetId);
+    }
+
     private DownloadExportResultDto exportCsv(Long datasetId, String datasetTitle) {
         List<DatasetFeatureExportDto> features = datasetDownloadMapper.findDatasetFeaturesForExport(datasetId);
 
@@ -217,8 +298,6 @@ public class DatasetDownloadService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "변환할 공간 데이터가 없습니다.");
         }
 
-        // 1. properties 안의 모든 키를 모아서 CSV 헤더 생성
-        // 예: name, category, code ...
         LinkedHashSet<String> propertyKeys = new LinkedHashSet<>();
         List<Map<String, Object>> propertyRows = new ArrayList<>();
 
@@ -229,15 +308,12 @@ public class DatasetDownloadService {
         }
 
         StringBuilder sb = new StringBuilder();
-
-        // 2. CSV 헤더
         sb.append("feature_id,feature_name,spatial_type,geometry_wkt");
         for (String key : propertyKeys) {
             sb.append(",").append(escapeCsv(key));
         }
         sb.append("\n");
 
-        // 3. CSV 본문
         for (int i = 0; i < features.size(); i++) {
             DatasetFeatureExportDto feature = features.get(i);
             Map<String, Object> properties = propertyRows.get(i);
@@ -275,12 +351,13 @@ public class DatasetDownloadService {
     }
 
     private String escapeCsv(String value) {
-        if (value == null) return "";
+        if (value == null) {
+            return "";
+        }
         String escaped = value.replace("\"", "\"\"");
         return "\"" + escaped + "\"";
-    }    
-    
-    // GeoJson
+    }
+
     private DownloadExportResultDto exportGeoJson(Long datasetId, String datasetTitle) {
         String geoJson = datasetDownloadMapper.findDatasetExportGeoJson(datasetId);
 
@@ -293,52 +370,67 @@ public class DatasetDownloadService {
                 "application/geo+json",
                 geoJson.getBytes(StandardCharsets.UTF_8)
         );
-    }    
+    }
 
-    // KML
-    private DownloadExportResultDto exportKml(Long datasetId, String datasetTitle) {
+    private DownloadExportResultDto exportXlsx(Long datasetId, String datasetTitle) {
         List<DatasetFeatureExportDto> features = datasetDownloadMapper.findDatasetFeaturesForExport(datasetId);
 
         if (features.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "변환할 공간 데이터가 없습니다.");
         }
 
-        StringBuilder sb = new StringBuilder();
-        sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        sb.append("<kml xmlns=\"http://www.opengis.net/kml/2.2\">\n");
-        sb.append("<Document>\n");
+        LinkedHashSet<String> propertyKeys = new LinkedHashSet<>();
+        List<Map<String, Object>> propertyRows = new ArrayList<>();
 
         for (DatasetFeatureExportDto feature : features) {
-            sb.append("  <Placemark>\n");
-            sb.append("    <name>").append(escapeXml(feature.getFeatureName())).append("</name>\n");
-
-            // TODO:
-            // geometry_json 또는 geometry_wkt를 읽어서
-            // Point / LineString / Polygon별 KML 태그로 바꾸는 로직 필요
-            // 여기서 1차는 구조만 잡고, 실제 geometry 변환 함수로 분리하는 게 좋음
-
-            sb.append("  </Placemark>\n");
+            Map<String, Object> properties = parseProperties(feature.getPropertiesJson());
+            propertyRows.add(properties);
+            propertyKeys.addAll(properties.keySet());
         }
 
-        sb.append("</Document>\n");
-        sb.append("</kml>");
+        try (XSSFWorkbook workbook = new XSSFWorkbook();
+             ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
 
-        return new DownloadExportResultDto(
-                datasetTitle + ".kml",
-                "application/vnd.google-earth.kml+xml",
-                sb.toString().getBytes(StandardCharsets.UTF_8)
-        );
+            Sheet sheet = workbook.createSheet("dataset");
+
+            Row headerRow = sheet.createRow(0);
+            int headerIndex = 0;
+            headerRow.createCell(headerIndex++).setCellValue("feature_id");
+            headerRow.createCell(headerIndex++).setCellValue("feature_name");
+            headerRow.createCell(headerIndex++).setCellValue("spatial_type");
+            headerRow.createCell(headerIndex++).setCellValue("geometry_wkt");
+
+            for (String key : propertyKeys) {
+                headerRow.createCell(headerIndex++).setCellValue(key);
+            }
+
+            for (int i = 0; i < features.size(); i++) {
+                DatasetFeatureExportDto feature = features.get(i);
+                Map<String, Object> properties = propertyRows.get(i);
+
+                Row row = sheet.createRow(i + 1);
+                int cellIndex = 0;
+
+                row.createCell(cellIndex++).setCellValue(feature.getFeatureId() == null ? "" : String.valueOf(feature.getFeatureId()));
+                row.createCell(cellIndex++).setCellValue(feature.getFeatureName() == null ? "" : feature.getFeatureName());
+                row.createCell(cellIndex++).setCellValue(feature.getSpatialType() == null ? "" : feature.getSpatialType());
+                row.createCell(cellIndex++).setCellValue(feature.getGeometryWkt() == null ? "" : feature.getGeometryWkt());
+
+                for (String key : propertyKeys) {
+                    Object value = properties.get(key);
+                    row.createCell(cellIndex++).setCellValue(value == null ? "" : String.valueOf(value));
+                }
+            }
+
+            workbook.write(outputStream);
+
+            return new DownloadExportResultDto(
+                    datasetTitle + ".xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    outputStream.toByteArray()
+            );
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "XLSX 파일 생성에 실패했습니다.", e);
+        }
     }
-
-    private String escapeXml(String value) {
-        if (value == null) return "";
-        return value
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace("\"", "&quot;")
-                .replace("'", "&apos;");
-    }
-    
-
 }
