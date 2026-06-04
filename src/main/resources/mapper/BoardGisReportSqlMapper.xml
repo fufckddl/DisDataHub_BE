@@ -4,13 +4,14 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 
 <mapper namespace="com.hub.gisdatahub.board.mapper.GisReportSqlMapper">
-        <!-- 사용자 GIS 오류제보 목록 조회 -->
+    <!-- 사용자 GIS 오류제보 목록 조회 -->
     <select id="findGisReportList"
             resultType="com.hub.gisdatahub.board.dto.GisReportDetailDto">
         SELECT
             bp.post_id,
             bp.board_type_code,
             bp.user_id,
+            u.username AS writer_name,
             bp.title,
             bp.content,
             bp.visibility_status,
@@ -19,7 +20,7 @@
             bp.view_count,
             bp.updated_at,
             bp.deleted_yn,
-                                                    
+
             grd.report_category_code,
             grd.error_type_code,
             grd.process_status_code,
@@ -35,9 +36,11 @@
         FROM sd_board_post bp
         INNER JOIN sd_gis_report_detail grd
             ON bp.post_id = grd.post_id
+        LEFT JOIN sd_user u
+            ON bp.user_id = u.user_id
         WHERE bp.board_type_code = 'GIS_REPORT'
-            AND bp.deleted_yn = 'N'
-            AND bp.visibility_status = 'PUBLIC'
+        AND bp.deleted_yn = 'N'
+        AND bp.visibility_status = 'PUBLIC'
         ORDER BY bp.created_at DESC
     </select>
 
@@ -104,6 +107,7 @@
             bp.post_id,
             bp.board_type_code,
             bp.user_id,
+            u.username AS writer_name,
             bp.title,
             bp.content,
             bp.visibility_status,
@@ -128,6 +132,8 @@
         FROM sd_board_post bp
         INNER JOIN sd_gis_report_detail grd
             ON bp.post_id = grd.post_id
+        LEFT JOIN sd_user u
+            ON bp.user_id = u.user_id
         WHERE bp.post_id = #{postId}
         AND bp.board_type_code = 'GIS_REPORT'
         AND bp.deleted_yn = 'N'

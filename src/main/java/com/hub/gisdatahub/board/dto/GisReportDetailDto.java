@@ -15,6 +15,10 @@ public class GisReportDetailDto {
     private String address;
     private BigDecimal latitude;
     private BigDecimal longitude;
+    private String title;
+    private String content;
+    private String writerName;
+    private Integer viewCount;
     private String sido;
     private String sigungu;
     private String eupmyeondong;
