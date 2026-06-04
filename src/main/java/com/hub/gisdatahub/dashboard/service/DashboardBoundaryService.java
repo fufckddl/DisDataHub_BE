@@ -203,6 +203,9 @@ public class DashboardBoundaryService {
             BigDecimal.valueOf(95), BigDecimal.valueOf(105));
     private static final String EV_CHARGER_DATASET_CODE = "KECO_EV_CHARGER_MAIN";
     private static final String EV_CHARGER_COUNT_METRIC_CODE = "EV_CHARGER_COUNT";
+    private static final String AIRKOREA_AIR_QUALITY_DATASET_CODE = "AIRKOREA_AIR_QUALITY_MAIN";
+    private static final String KMA_VILAGE_FCST_DATASET_CODE = "KMA_VILAGE_FCST_MAIN";
+    private static final String KMA_TEMPERATURE_CATEGORY = "T1H";
     private static final String MOIS_AVERAGE_AGE_DATASET_CODE = "MOIS_ADMM_AVG_AGE_MAIN";
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
@@ -899,9 +902,18 @@ public class DashboardBoundaryService {
     }
 
     private List<Map<String, Object>> findDashboardGisObservationRows(String datasetCode, String areaCode, int limit) {
+        Optional<AreaMeta> selectedAreaMeta = areaCode == null
+                ? Optional.empty()
+                : findOptionalAreaMeta(areaCode);
         Set<String> scopeAreaCodes = areaCode == null
                 ? Set.of()
-                : dashboardObservationScopeAreaCodes(areaCode);
+                : dashboardObservationScopeAreaCodes(areaCode, selectedAreaMeta.orElse(null));
+        String selectedAreaLabel = AIRKOREA_AIR_QUALITY_DATASET_CODE.equals(datasetCode)
+                ? selectedAreaMeta.map(this::displayAreaName).orElse(null)
+                : null;
+        String metricFilter = KMA_VILAGE_FCST_DATASET_CODE.equals(datasetCode)
+                ? "AND o.dimensions ->> 'category' = :kmaTemperatureCategory"
+                : "";
         String areaFilter = areaCode == null ? "" : """
                   AND (
                       o.area_code = :areaCode
@@ -990,6 +1002,7 @@ public class DashboardBoundaryService {
                     WHERE o.dataset_code = :datasetCode
                       AND o.numeric_value IS NOT NULL
                       %s
+                      %s
                 ),
                 latest_key AS (
                     SELECT base_date, COALESCE(base_hour, '') AS base_hour
@@ -997,10 +1010,33 @@ public class DashboardBoundaryService {
                     ORDER BY base_date DESC, COALESCE(base_hour, '') DESC, created_at DESC
                     LIMIT 1
                 ),
+                ranked_rows AS (
+                    SELECT
+                        sr.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY
+                                CASE
+                                    WHEN sr.dataset_code = 'AIRKOREA_AIR_QUALITY_MAIN'
+                                        THEN COALESCE(NULLIF(sr.source_area_code, ''), NULLIF(sr.area_code, ''), sr.area_observation_id::text)
+                                    ELSE '__latest_key__'
+                                END
+                            ORDER BY
+                                COALESCE(sr.observed_at, sr.created_at) DESC,
+                                sr.base_date DESC,
+                                COALESCE(sr.base_hour, '') DESC,
+                                sr.area_observation_id DESC
+                        ) AS recency_rank
+                    FROM scoped_rows sr
+                ),
                 latest_rows AS (
                     SELECT
                         sr.*,
                         COALESCE(
+                            CASE
+                                WHEN sr.dataset_code = 'AIRKOREA_AIR_QUALITY_MAIN'
+                                    THEN NULLIF(:selectedAreaLabel, '')
+                                ELSE NULL
+                            END,
                             CASE
                                 WHEN sr.source_area_code LIKE 'KMA:%%'
                                     THEN COALESCE(NULLIF(sr.dimensions ->> 'metricLabel', ''), NULLIF(sr.dimensions ->> 'category', ''))
@@ -1036,10 +1072,18 @@ public class DashboardBoundaryService {
                         COUNT(*) OVER () AS total_row_count,
                         COALESCE(SUM(sr.numeric_value) OVER (), 0) AS total_numeric_value,
                         MAX(COALESCE(sr.observed_at, sr.created_at)) OVER () AS collected_at
-                    FROM scoped_rows sr
-                    JOIN latest_key lk
+                    FROM ranked_rows sr
+                    LEFT JOIN latest_key lk
                         ON lk.base_date = sr.base_date
                        AND lk.base_hour = COALESCE(sr.base_hour, '')
+                    WHERE (
+                            sr.dataset_code = 'AIRKOREA_AIR_QUALITY_MAIN'
+                            AND sr.recency_rank = 1
+                        )
+                       OR (
+                            sr.dataset_code <> 'AIRKOREA_AIR_QUALITY_MAIN'
+                            AND lk.base_date IS NOT NULL
+                        )
                 )
                 SELECT
                     dataset_code,
@@ -1060,11 +1104,15 @@ public class DashboardBoundaryService {
                 FROM latest_rows
                 ORDER BY numeric_value DESC NULLS LAST, label
                 LIMIT :limit
-                """.formatted(areaFilter);
+                """.formatted(metricFilter, areaFilter);
 
         MapSqlParameterSource params = new MapSqlParameterSource()
                 .addValue("datasetCode", datasetCode)
-                .addValue("limit", limit);
+                .addValue("limit", limit)
+                .addValue("selectedAreaLabel", selectedAreaLabel);
+        if (KMA_VILAGE_FCST_DATASET_CODE.equals(datasetCode)) {
+            params.addValue("kmaTemperatureCategory", KMA_TEMPERATURE_CATEGORY);
+        }
         if (areaCode != null) {
             params.addValue("areaCode", areaCode);
             params.addValue("scopeAreaCodes", scopeAreaCodes);
@@ -1073,14 +1121,29 @@ public class DashboardBoundaryService {
         return jdbcTemplate.query(sql, params, (rs, rowNum) -> mapObservationRow(rs));
     }
 
-    private Set<String> dashboardObservationScopeAreaCodes(String areaCode) {
+    private Optional<AreaMeta> findOptionalAreaMeta(String areaCode) {
+        try {
+            return Optional.of(findAreaMeta(resolveAreaCode(areaCode)));
+        } catch (ResponseStatusException ignored) {
+            return Optional.empty();
+        }
+    }
+
+    private String displayAreaName(AreaMeta areaMeta) {
+        if (areaMeta.fullName() != null && !areaMeta.fullName().isBlank()) {
+            return areaMeta.fullName();
+        }
+        return areaMeta.name();
+    }
+
+    private Set<String> dashboardObservationScopeAreaCodes(String areaCode, AreaMeta knownAreaMeta) {
         LinkedHashSet<String> scopeAreaCodes = new LinkedHashSet<>();
         if (areaCode == null || areaCode.isBlank()) {
             return scopeAreaCodes;
         }
         scopeAreaCodes.add(areaCode);
         try {
-            AreaMeta areaMeta = findAreaMeta(resolveAreaCode(areaCode));
+            AreaMeta areaMeta = knownAreaMeta != null ? knownAreaMeta : findAreaMeta(resolveAreaCode(areaCode));
             addIfPresent(scopeAreaCodes, areaMeta.areaCode());
             addIfPresent(scopeAreaCodes, composeAreaCode(areaMeta.sidoCode(), "00000000"));
             addIfPresent(scopeAreaCodes, composeAreaCode(areaMeta.sigunguCode(), "00000"));
