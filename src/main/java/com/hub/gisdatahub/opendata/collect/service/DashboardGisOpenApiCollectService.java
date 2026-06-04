@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.Statement;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -44,13 +45,21 @@ public class DashboardGisOpenApiCollectService {
     private static final ZoneId SEOUL_ZONE = ZoneId.of("Asia/Seoul");
     private static final DateTimeFormatter STATS_YM_FORMAT = DateTimeFormatter.ofPattern("yyyyMM");
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
+    private static final DateTimeFormatter AIRKOREA_DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final DateTimeFormatter KMA_BASE_DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyyMMddHHmm");
+    private static final DateTimeFormatter KMA_BASE_TIME_FORMAT = DateTimeFormatter.ofPattern("HHmm");
     private static final int DEFAULT_PAGE_NO = 1;
     private static final int DEFAULT_NUM_OF_ROWS = 5;
     private static final int MAX_NUM_OF_ROWS = 100;
+    private static final String SEOUL_SIDO_AREA_CODE = "1100000000";
+    private static final String SEOUL_SIDO_CODE = "11";
     private static final String EV_CHARGER_COUNT_METRIC_CODE = "EV_CHARGER_COUNT";
     private static final String EV_CHARGER_REGION_STATS_TYPE = "SIDO_DISTRIBUTION";
     private static final Duration EV_CHARGER_STATS_READ_TIMEOUT = Duration.ofSeconds(15);
+    private static final Duration MOIS_DASHBOARD_CONNECT_TIMEOUT = Duration.ofSeconds(8);
+    private static final Duration MOIS_DASHBOARD_READ_TIMEOUT = Duration.ofSeconds(30);
     private static final int EV_CHARGER_STATS_FAILURE_BREAK_COUNT = 3;
+    private static final String MOIS_LEGAL_DONG_AREA_LEVEL = "LEGAL_DONG";
 
     private final DataCollectClient dataCollectClient;
     private final NamedParameterJdbcTemplate jdbcTemplate;
@@ -86,7 +95,8 @@ public class DashboardGisOpenApiCollectService {
         List<Map<String, Object>> results = new ArrayList<>();
 
         for (SourceSpec spec : targets) {
-            results.add(collectOne(spec, resolvedPageNo, resolvedNumOfRows, resolvedStatsYm, resolvedKeyword));
+            String targetKeyword = usesAreaCollectionScope(spec) ? keyword : resolvedKeyword;
+            results.add(collectOne(spec, resolvedPageNo, resolvedNumOfRows, resolvedStatsYm, targetKeyword));
         }
 
         long completed = results.stream().filter(result -> "COMPLETED".equals(result.get("status"))).count();
@@ -136,6 +146,25 @@ public class DashboardGisOpenApiCollectService {
             rows.add(row);
         }
         return rows;
+    }
+
+    @Transactional
+    public Map<String, Object> cleanupMoisLegalDongObservations() {
+        List<String> datasetCodes = moisLegalDongDatasetCodes();
+        Map<String, Object> before = countMoisLegalDongObservationRows(datasetCodes);
+        int deleted = deleteInvalidMoisLegalDongObservations(datasetCodes);
+        int updated = normalizeMoisLegalDongObservations(datasetCodes);
+        int catalogUpdated = normalizeMoisLegalDongDatasetCatalog(datasetCodes);
+        Map<String, Object> after = countMoisLegalDongObservationRows(datasetCodes);
+
+        return Map.of(
+                "target", "MOIS_LEGAL_DONG_OBSERVATIONS",
+                "datasetCodes", datasetCodes,
+                "deletedInvalidRows", deleted,
+                "updatedLegalRows", updated,
+                "updatedCatalogRows", catalogUpdated,
+                "before", before,
+                "after", after);
     }
 
     @Transactional
@@ -239,6 +268,15 @@ public class DashboardGisOpenApiCollectService {
         if (spec == SourceSpec.MOIS_ADMM_SEXD_AGE_PPLTN_MAIN) {
             return syncExistingResidentPopulation(spec, statsYm);
         }
+        if (isMoisLegalDongSpec(spec)) {
+            return collectMoisLegalDongs(spec, statsYm, keyword);
+        }
+        if (spec == SourceSpec.AIRKOREA_AIR_QUALITY_MAIN) {
+            return collectAirKoreaSidoAirQuality(spec, keyword);
+        }
+        if (spec == SourceSpec.KMA_VILAGE_FCST_MAIN) {
+            return collectKmaSigunguWeather(spec, keyword);
+        }
         if (spec.blockerReason() != null && !spec.blockerReason().isBlank()) {
             long runId = startRun(spec, requestParams(spec, pageNo, numOfRows, statsYm, keyword));
             finishRun(runId, "SKIPPED", 0, 0, 1, spec.blockerReason());
@@ -279,6 +317,213 @@ public class DashboardGisOpenApiCollectService {
         }
     }
 
+    private Map<String, Object> collectMoisLegalDongs(SourceSpec spec, String statsYm, String keyword) {
+        Map<String, Object> sampleParams = requestParams(spec, 1, MAX_NUM_OF_ROWS, statsYm, normalizeKeyword(null));
+        String missingKey = ensureAuthParams(spec, sampleParams);
+        if (missingKey != null) {
+            return result(spec, "FAILED", 0, 0, "missing API key: " + missingKey);
+        }
+
+        List<SigunguArea> areas = findSigunguAreas(resolveMoisLegalDongScope(keyword));
+        int deletedExistingRows = deleteDashboardObservationsForStatsMonth(spec, statsYm, areas);
+        long runId = startRun(spec, Map.of(
+                "mode", "SIGUNGU_TO_LEGAL_DONG",
+                "statsYm", statsYm,
+                "numOfRows", MAX_NUM_OF_ROWS,
+                "deletedExistingRows", deletedExistingRows,
+                "sampleParams", redactParams(sampleParams)));
+        int fetched = 0;
+        int saved = 0;
+        int failed = 0;
+        String lastError = null;
+
+        try {
+            for (SigunguArea area : areas) {
+                int pageNo = 1;
+                boolean hasNextPage = true;
+                while (hasNextPage) {
+                    Map<String, Object> queryParams = requestParams(spec, pageNo, MAX_NUM_OF_ROWS, statsYm, normalizeKeyword(null));
+                    ensureAuthParams(spec, queryParams);
+                    queryParams.put("stdgCd", area.areaCode());
+                    queryParams.put("lv", "3");
+
+                    try {
+                        String body = dataCollectClient.callOpenApi(
+                                spec.baseUrl(),
+                                spec.path(),
+                                queryParams,
+                                MOIS_DASHBOARD_CONNECT_TIMEOUT,
+                                MOIS_DASHBOARD_READ_TIMEOUT);
+                        SaveResult saveResult = saveResponse(runId, spec, body);
+                        fetched += saveResult.fetchedCount();
+                        saved += saveResult.savedCount();
+                        hasNextPage = hasNextPage(body, pageNo, MAX_NUM_OF_ROWS, saveResult);
+                        pageNo++;
+                    } catch (Exception exception) {
+                        failed++;
+                        hasNextPage = false;
+                        lastError = area.areaCode() + " " + area.name() + ": "
+                                + (exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage());
+                        if (failed >= EV_CHARGER_STATS_FAILURE_BREAK_COUNT) {
+                            break;
+                        }
+                    }
+                }
+                if (failed >= EV_CHARGER_STATS_FAILURE_BREAK_COUNT) {
+                    break;
+                }
+            }
+
+            boolean hardFailed = failed >= EV_CHARGER_STATS_FAILURE_BREAK_COUNT && saved == 0;
+            String runStatus = saved > 0 ? "SUCCEEDED" : hardFailed ? "FAILED" : "SKIPPED";
+            String status = saved > 0 ? "COMPLETED" : hardFailed ? "FAILED" : "NO_DATA";
+            finishRun(runId, runStatus, fetched, saved, failed, lastError);
+            return result(spec, status, fetched, saved,
+                    lastError == null ? "sigungu legal-dong rows collected" : lastError);
+        } catch (Exception exception) {
+            String message = exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
+            finishRun(runId, "FAILED", fetched, saved, failed + 1, message);
+            return result(spec, "FAILED", fetched, saved, message);
+        }
+    }
+
+    private Map<String, Object> collectAirKoreaSidoAirQuality(SourceSpec spec, String keyword) {
+        MoisAreaScope scope = resolveAreaCollectionScope(keyword);
+        List<SidoArea> areas = findSidoAreas(scope);
+        if (areas.isEmpty()) {
+            return result(spec, "NO_DATA", 0, 0, "수집 대상 시도 코드가 없습니다.");
+        }
+
+        Map<String, Object> sampleParams = requestParams(spec, 1, MAX_NUM_OF_ROWS, normalizeStatsYm(null), normalizeKeyword(null));
+        String missingKey = ensureAuthParams(spec, sampleParams);
+        if (missingKey != null) {
+            return result(spec, "FAILED", 0, 0, "missing API key: " + missingKey);
+        }
+
+        int deletedExistingRows = deleteDashboardObservationsForScope(spec, scope);
+        long runId = startRun(spec, Map.of(
+                "mode", "SIDO_AIR_QUALITY",
+                "areaCount", areas.size(),
+                "deletedExistingRows", deletedExistingRows,
+                "sampleParams", redactParams(sampleParams)));
+        int fetched = 0;
+        int saved = 0;
+        int failed = 0;
+        int consecutiveFailures = 0;
+        String lastError = null;
+
+        for (SidoArea area : areas) {
+            Map<String, Object> queryParams = requestParams(spec, 1, MAX_NUM_OF_ROWS, normalizeStatsYm(null), normalizeKeyword(null));
+            ensureAuthParams(spec, queryParams);
+            queryParams.put("sidoName", airKoreaSidoName(area));
+
+            try {
+                String body = dataCollectClient.callOpenApi(
+                        spec.baseUrl(),
+                        spec.path(),
+                        queryParams,
+                        MOIS_DASHBOARD_CONNECT_TIMEOUT,
+                        MOIS_DASHBOARD_READ_TIMEOUT);
+                SaveResult saveResult = saveObservationResponseWithContext(runId, spec, body, Map.of(
+                        "sidoCode", area.sidoCode(),
+                        "sidoAreaCode", area.areaCode(),
+                        "sidoName", area.name(),
+                        "sidoFullName", area.fullName(),
+                        "airKoreaSidoName", airKoreaSidoName(area)));
+                fetched += saveResult.fetchedCount();
+                saved += saveResult.savedCount();
+                consecutiveFailures = 0;
+            } catch (Exception exception) {
+                failed++;
+                consecutiveFailures++;
+                lastError = area.areaCode() + " " + area.name() + ": "
+                        + (exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage());
+                if (consecutiveFailures >= EV_CHARGER_STATS_FAILURE_BREAK_COUNT) {
+                    break;
+                }
+            }
+        }
+
+        String runStatus = saved > 0 ? (failed > 0 ? "PARTIAL" : "SUCCEEDED") : failed > 0 ? "FAILED" : "SKIPPED";
+        String status = saved > 0 ? (failed > 0 ? "PARTIAL" : "COMPLETED") : failed > 0 ? "FAILED" : "NO_DATA";
+        finishRun(runId, runStatus, fetched, saved, failed, lastError);
+        return result(spec, status, fetched, saved,
+                lastError == null ? "sido air quality rows collected" : lastError);
+    }
+
+    private Map<String, Object> collectKmaSigunguWeather(SourceSpec spec, String keyword) {
+        MoisAreaScope scope = resolveAreaCollectionScope(keyword);
+        List<WeatherGridArea> areas = findWeatherGridAreas(scope);
+        if (areas.isEmpty()) {
+            return result(spec, "NO_DATA", 0, 0, "수집 대상 시군구 중심좌표가 없습니다.");
+        }
+
+        Map<String, Object> sampleParams = requestParams(spec, 1, MAX_NUM_OF_ROWS, normalizeStatsYm(null), normalizeKeyword(null));
+        String missingKey = ensureAuthParams(spec, sampleParams);
+        if (missingKey != null) {
+            return result(spec, "FAILED", 0, 0, "missing API key: " + missingKey);
+        }
+
+        int deletedExistingRows = deleteDashboardObservationsForScope(spec, scope);
+        long runId = startRun(spec, Map.of(
+                "mode", "SIGUNGU_KMA_GRID",
+                "areaCount", areas.size(),
+                "deletedExistingRows", deletedExistingRows,
+                "sampleParams", redactParams(sampleParams)));
+        Map<String, String> responseByGrid = new LinkedHashMap<>();
+        int fetched = 0;
+        int saved = 0;
+        int failed = 0;
+        int consecutiveFailures = 0;
+        String lastError = null;
+
+        for (WeatherGridArea area : areas) {
+            String gridKey = area.gridX() + ":" + area.gridY();
+            try {
+                String body = responseByGrid.get(gridKey);
+                if (body == null) {
+                    Map<String, Object> queryParams = requestParams(spec, 1, MAX_NUM_OF_ROWS, normalizeStatsYm(null), normalizeKeyword(null));
+                    ensureAuthParams(spec, queryParams);
+                    queryParams.put("nx", area.gridX());
+                    queryParams.put("ny", area.gridY());
+                    body = dataCollectClient.callOpenApi(
+                            spec.baseUrl(),
+                            spec.path(),
+                            queryParams,
+                            MOIS_DASHBOARD_CONNECT_TIMEOUT,
+                            MOIS_DASHBOARD_READ_TIMEOUT);
+                    responseByGrid.put(gridKey, body);
+                }
+                SaveResult saveResult = saveObservationResponseWithContext(runId, spec, body, Map.of(
+                        "areaCode", area.areaCode(),
+                        "areaLevel", area.areaLevel(),
+                        "areaName", area.name(),
+                        "areaFullName", area.fullName(),
+                        "nx", String.valueOf(area.gridX()),
+                        "ny", String.valueOf(area.gridY()),
+                        "longitude", String.valueOf(area.longitude()),
+                        "latitude", String.valueOf(area.latitude())));
+                fetched += saveResult.fetchedCount();
+                saved += saveResult.savedCount();
+                consecutiveFailures = 0;
+            } catch (Exception exception) {
+                failed++;
+                consecutiveFailures++;
+                lastError = area.areaCode() + " " + area.name() + ": "
+                        + (exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage());
+                if (consecutiveFailures >= EV_CHARGER_STATS_FAILURE_BREAK_COUNT) {
+                    break;
+                }
+            }
+        }
+
+        String runStatus = saved > 0 ? (failed > 0 ? "PARTIAL" : "SUCCEEDED") : failed > 0 ? "FAILED" : "SKIPPED";
+        String status = saved > 0 ? (failed > 0 ? "PARTIAL" : "COMPLETED") : failed > 0 ? "FAILED" : "NO_DATA";
+        finishRun(runId, runStatus, fetched, saved, failed, lastError);
+        return result(spec, status, fetched, saved,
+                lastError == null ? "sigungu KMA grid rows collected" : lastError);
+    }
+
     private void ensureEvChargerCountMetric() {
         String sql = """
                 INSERT INTO public.sd_dashboard_metric (
@@ -311,19 +556,112 @@ public class DashboardGisOpenApiCollectService {
     }
 
     private List<SidoArea> findSidoAreas() {
+        return findSidoAreas(new MoisAreaScope(null, null));
+    }
+
+    private List<SidoArea> findSidoAreas(MoisAreaScope scope) {
+        String sidoCode = blankToNull(scope.sidoCode());
+        String sigunguCode = blankToNull(scope.sigunguCode());
+        if (sidoCode == null && sigunguCode != null && sigunguCode.length() >= 2) {
+            sidoCode = sigunguCode.substring(0, 2);
+        }
+        String areaFilter = "";
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        if (sidoCode != null) {
+            areaFilter = " AND sido_code = :sidoCode\n";
+            params.addValue("sidoCode", sidoCode);
+        }
         String sql = """
                 SELECT area_code, sido_code, name, full_name
                 FROM public.sd_area_code
                 WHERE level = 'SIDO'
                   AND is_active = TRUE
                   AND sido_code IS NOT NULL
+                  %s
                 ORDER BY sido_code
-                """;
-        return jdbcTemplate.query(sql, new MapSqlParameterSource(), (rs, rowNum) -> new SidoArea(
+                """.formatted(areaFilter);
+        return jdbcTemplate.query(sql, params, (rs, rowNum) -> new SidoArea(
                 rs.getString("area_code"),
                 rs.getString("sido_code"),
                 rs.getString("name"),
                 rs.getString("full_name")));
+    }
+
+    private List<SigunguArea> findSigunguAreas(MoisAreaScope scope) {
+        String sidoCode = blankToNull(scope.sidoCode());
+        String sigunguCode = blankToNull(scope.sigunguCode());
+        String areaFilter = "";
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        if (sidoCode != null) {
+            areaFilter += " AND sido_code = :sidoCode\n";
+            params.addValue("sidoCode", sidoCode);
+        }
+        if (sigunguCode != null) {
+            areaFilter += " AND sigungu_code = :sigunguCode\n";
+            params.addValue("sigunguCode", sigunguCode);
+        }
+        String sql = """
+                SELECT area_code, sido_code, sigungu_code, name, full_name
+                FROM public.sd_area_code
+                WHERE level = 'SIGUNGU'
+                  AND is_active = TRUE
+                  AND sigungu_code IS NOT NULL
+                  %s
+                ORDER BY sido_code, sigungu_code
+                """.formatted(areaFilter);
+        return jdbcTemplate.query(sql, params, (rs, rowNum) -> new SigunguArea(
+                rs.getString("area_code"),
+                rs.getString("sido_code"),
+                rs.getString("sigungu_code"),
+                rs.getString("name"),
+                rs.getString("full_name")));
+    }
+
+    private List<WeatherGridArea> findWeatherGridAreas(MoisAreaScope scope) {
+        String sidoCode = blankToNull(scope.sidoCode());
+        String sigunguCode = blankToNull(scope.sigunguCode());
+        String areaFilter = "";
+        MapSqlParameterSource params = new MapSqlParameterSource();
+        if (sidoCode != null) {
+            areaFilter += " AND c.sido_code = :sidoCode\n";
+            params.addValue("sidoCode", sidoCode);
+        }
+        if (sigunguCode != null) {
+            areaFilter += " AND c.sigungu_code = :sigunguCode\n";
+            params.addValue("sigunguCode", sigunguCode);
+        }
+        String sql = """
+                SELECT
+                    c.area_code,
+                    c.level,
+                    c.name,
+                    c.full_name,
+                    ST_X(ST_Transform(b.center, 4326)) AS longitude,
+                    ST_Y(ST_Transform(b.center, 4326)) AS latitude
+                FROM public.sd_area_code c
+                JOIN public.sd_area_boundary b
+                    ON b.area_code = c.area_code
+                WHERE c.level = 'SIGUNGU'
+                  AND c.is_active = TRUE
+                  AND c.sigungu_code IS NOT NULL
+                  AND b.center IS NOT NULL
+                  %s
+                ORDER BY c.sido_code, c.sigungu_code
+                """.formatted(areaFilter);
+        return jdbcTemplate.query(sql, params, (rs, rowNum) -> {
+            double longitude = rs.getDouble("longitude");
+            double latitude = rs.getDouble("latitude");
+            KmaGrid grid = toKmaGrid(longitude, latitude);
+            return new WeatherGridArea(
+                    rs.getString("area_code"),
+                    rs.getString("level"),
+                    rs.getString("name"),
+                    rs.getString("full_name"),
+                    longitude,
+                    latitude,
+                    grid.x(),
+                    grid.y());
+        });
     }
 
     private RegionCount fetchEvChargerRegionCount(SourceSpec spec, SidoArea area) {
@@ -361,13 +699,24 @@ public class DashboardGisOpenApiCollectService {
     }
 
     private Optional<BigDecimal> extractTotalCount(JsonNode root) {
-        for (String path : List.of("totalCount", "response.body.totalCount", "body.totalCount")) {
+        for (String path : List.of("totalCount", "response.body.totalCount", "body.totalCount", "Response.head.totalCount", "head.totalCount")) {
             BigDecimal value = decimal(path(root, path));
             if (value != null) {
                 return Optional.of(value);
             }
         }
         return Optional.empty();
+    }
+
+    private boolean hasNextPage(String body, int pageNo, int numOfRows, SaveResult saveResult) {
+        JsonNode root = readJsonOrNull(body);
+        if (root != null) {
+            Optional<BigDecimal> totalCount = extractTotalCount(root);
+            if (totalCount.isPresent()) {
+                return pageNo * numOfRows < totalCount.get().intValue();
+            }
+        }
+        return saveResult.fetchedCount() >= numOfRows;
     }
 
     private void deleteEvChargerRegionStats() {
@@ -435,11 +784,20 @@ public class DashboardGisOpenApiCollectService {
         if (root == null) {
             List<JsonNode> xmlRows = readXmlRows(body);
             if (!xmlRows.isEmpty()) {
+                List<JsonNode> observationRows = new ArrayList<>();
                 int saved = 0;
                 for (JsonNode row : xmlRows) {
-                    saved += spec.storageType() == StorageType.FEATURE
-                            ? insertFeature(runId, spec, row)
-                            : insertObservation(runId, spec, row);
+                    if (shouldSkipObservation(spec, row)) {
+                        continue;
+                    }
+                    if (spec.storageType() == StorageType.FEATURE) {
+                        saved += insertFeature(runId, spec, row);
+                    } else {
+                        observationRows.add(row);
+                    }
+                }
+                if (spec.storageType() != StorageType.FEATURE) {
+                    saved += insertObservations(runId, spec, observationRows);
                 }
                 return new SaveResult(xmlRows.size(), saved, "parsed xml rows saved");
             }
@@ -453,18 +811,95 @@ public class DashboardGisOpenApiCollectService {
         List<JsonNode> rows = extractRows(root);
         int saved = 0;
         if (rows.isEmpty()) {
+            if (shouldSkipObservation(spec, root)) {
+                return new SaveResult(1, 0, "root response skipped");
+            }
             saved = spec.storageType() == StorageType.FEATURE
                     ? insertMetadataFeature(runId, spec, root.toString())
                     : insertObservation(runId, spec, root);
             return new SaveResult(1, saved, "root response saved");
         }
 
+        List<JsonNode> observationRows = new ArrayList<>();
         for (JsonNode row : rows) {
-            saved += spec.storageType() == StorageType.FEATURE
-                    ? insertFeature(runId, spec, row)
-                    : insertObservation(runId, spec, row);
+            if (shouldSkipObservation(spec, row)) {
+                continue;
+            }
+            if (spec.storageType() == StorageType.FEATURE) {
+                saved += insertFeature(runId, spec, row);
+            } else {
+                observationRows.add(row);
+            }
+        }
+        if (spec.storageType() != StorageType.FEATURE) {
+            saved += insertObservations(runId, spec, observationRows);
         }
         return new SaveResult(rows.size(), saved, "parsed rows saved");
+    }
+
+    private SaveResult saveObservationResponseWithContext(
+            long runId,
+            SourceSpec spec,
+            String body,
+            Map<String, String> context) throws JsonProcessingException {
+        if (body == null || body.isBlank()) {
+            return new SaveResult(0, 0, "empty response");
+        }
+        if (looksLikeApiError(body)) {
+            throw new IllegalStateException(abbreviate(body));
+        }
+
+        JsonNode root = readJsonOrNull(body);
+        if (root == null) {
+            List<JsonNode> xmlRows = readXmlRows(body);
+            List<JsonNode> observationRows = new ArrayList<>();
+            int saved = 0;
+            for (JsonNode row : xmlRows) {
+                JsonNode enrichedRow = enrichRow(row, context);
+                if (shouldSkipObservation(spec, enrichedRow)) {
+                    continue;
+                }
+                observationRows.add(enrichedRow);
+            }
+            saved += insertObservations(runId, spec, observationRows);
+            return new SaveResult(xmlRows.size(), saved, "parsed xml rows saved with area context");
+        }
+        if (hasJsonApiError(root)) {
+            throw new IllegalStateException(abbreviate(root.toString()));
+        }
+
+        List<JsonNode> rows = extractRows(root);
+        if (rows.isEmpty()) {
+            JsonNode enrichedRoot = enrichRow(root, context);
+            if (shouldSkipObservation(spec, enrichedRoot)) {
+                return new SaveResult(1, 0, "root response skipped");
+            }
+            return new SaveResult(1, insertObservation(runId, spec, enrichedRoot), "root response saved with area context");
+        }
+
+        int saved = 0;
+        List<JsonNode> observationRows = new ArrayList<>();
+        for (JsonNode row : rows) {
+            JsonNode enrichedRow = enrichRow(row, context);
+            if (shouldSkipObservation(spec, enrichedRow)) {
+                continue;
+            }
+            observationRows.add(enrichedRow);
+        }
+        saved += insertObservations(runId, spec, observationRows);
+        return new SaveResult(rows.size(), saved, "parsed rows saved with area context");
+    }
+
+    private JsonNode enrichRow(JsonNode row, Map<String, String> context) {
+        ObjectNode enriched;
+        if (row != null && row.isObject()) {
+            enriched = (ObjectNode) row.deepCopy();
+        } else {
+            enriched = objectMapper.createObjectNode();
+            enriched.set("value", row == null ? objectMapper.nullNode() : row);
+        }
+        context.forEach(enriched::put);
+        return enriched;
     }
 
     private int insertFeature(long runId, SourceSpec spec, JsonNode row) throws JsonProcessingException {
@@ -555,37 +990,467 @@ public class DashboardGisOpenApiCollectService {
     }
 
     private int insertObservation(long runId, SourceSpec spec, JsonNode row) throws JsonProcessingException {
-        String sql = """
+        MapSqlParameterSource params = observationParams(runId, spec, row, metricCode(spec.datasetCode()));
+        deleteExistingObservation(params);
+        return jdbcTemplate.update(observationInsertSql(), params);
+    }
+
+    private int insertObservations(long runId, SourceSpec spec, List<JsonNode> rows) throws JsonProcessingException {
+        if (rows.isEmpty()) {
+            return 0;
+        }
+        String metricCode = metricCode(spec.datasetCode());
+        MapSqlParameterSource[] params = new MapSqlParameterSource[rows.size()];
+        for (int index = 0; index < rows.size(); index++) {
+            params[index] = observationParams(runId, spec, rows.get(index), metricCode);
+        }
+        deleteExistingObservations(params);
+        int[] counts = jdbcTemplate.batchUpdate(observationInsertSql(), params);
+        int saved = 0;
+        for (int count : counts) {
+            if (count > 0) {
+                saved += count;
+            } else if (count == Statement.SUCCESS_NO_INFO) {
+                saved++;
+            }
+        }
+        return saved;
+    }
+
+    private String observationInsertSql() {
+        return """
                 INSERT INTO public.sd_dashboard_area_observation (
                     dataset_code, metric_code, collection_run_id, area_code, area_level, source_area_code,
                     source_area_name, grid_x, grid_y, base_date, base_hour, observed_at, numeric_value,
                     text_value, json_value, unit, dimensions, raw_payload, created_at, updated_at
                 ) VALUES (
-                    :datasetCode, :metricCode, :runId, NULL, :areaLevel, :sourceAreaCode, :sourceAreaName,
-                    :gridX, :gridY, :baseDate, :baseHour, CURRENT_TIMESTAMP, :numericValue, :textValue,
+                    :datasetCode, :metricCode, :runId, :areaCode, :areaLevel, :sourceAreaCode, :sourceAreaName,
+                    :gridX, :gridY, :baseDate, :baseHour, :observedAt, :numericValue, :textValue,
                     CAST(:jsonValue AS jsonb), :unit, CAST(:dimensions AS jsonb), CAST(:rawPayload AS jsonb),
                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 ) ON CONFLICT DO NOTHING
                 """;
-        BigDecimal numericValue = firstDecimal(row, "value", "val", "data", "cnt", "count", "totalCount", "totNmprCnt", "totPpltn", "population", "avgAge", "hhCnt", "numOfRows");
-        String sourceAreaCode = firstText(row, "areaCode", "admmCd", "admCd", "ctpvCd", "sggCd", "dongCd", "법정동코드");
-        MapSqlParameterSource params = new MapSqlParameterSource()
+    }
+
+    private MapSqlParameterSource observationParams(long runId, SourceSpec spec, JsonNode row, String metricCode)
+            throws JsonProcessingException {
+        BigDecimal numericValue = observationNumericValue(spec, row);
+        String sourceAreaCode = observationSourceAreaCode(spec, row);
+        String sourceAreaName = observationSourceAreaName(spec, row);
+        StoredArea storedArea = resolveStoredArea(spec, sourceAreaCode, sourceAreaName, row);
+        String fallbackAreaLevel = observationAreaLevel(spec, sourceAreaCode);
+        String areaLevel = isMoisLegalDongSpec(spec)
+                ? fallbackAreaLevel
+                : storedArea.level() != null ? storedArea.level() : fallbackAreaLevel;
+        return new MapSqlParameterSource()
                 .addValue("datasetCode", spec.datasetCode())
-                .addValue("metricCode", metricCode(spec.datasetCode()))
+                .addValue("metricCode", metricCode)
                 .addValue("runId", runId)
-                .addValue("areaLevel", blankToNull(spec.defaultAreaLevel()))
+                .addValue("areaCode", storedArea.areaCode())
+                .addValue("areaLevel", blankToNull(areaLevel))
                 .addValue("sourceAreaCode", blankToNull(sourceAreaCode))
-                .addValue("sourceAreaName", blankToNull(firstText(row, "areaName", "ctpvNm", "sggNm", "dongNm", "sidoName", "stationName", "stnNm", "addr")))
+                .addValue("sourceAreaName", blankToNull(sourceAreaName))
                 .addValue("gridX", blankToNull(firstText(row, "nx", "gridX")))
                 .addValue("gridY", blankToNull(firstText(row, "ny", "gridY")))
                 .addValue("baseDate", baseDate(row))
                 .addValue("baseHour", baseHour(row))
+                .addValue("observedAt", observedAt(row))
                 .addValue("numericValue", numericValue)
                 .addValue("textValue", numericValue == null ? abbreviate(row.toString()) : null)
                 .addValue("jsonValue", row.toString())
-                .addValue("unit", null)
-                .addValue("dimensions", json(Map.of("collector", "dashboard-gis", "sourceCode", spec.sourceCode())))
+                .addValue("unit", blankToNull(observationUnit(spec, row)))
+                .addValue("dimensions", json(observationDimensions(spec, row)))
                 .addValue("rawPayload", row.toString());
+    }
+
+    private BigDecimal observationNumericValue(SourceSpec spec, JsonNode row) {
+        if (spec == SourceSpec.KMA_VILAGE_FCST_MAIN) {
+            return firstDecimal(row, "obsrValue", "fcstValue", "value");
+        }
+        if (spec == SourceSpec.AIRKOREA_AIR_QUALITY_MAIN) {
+            return firstDecimal(row, "pm10Value", "pm25Value", "khaiValue", "so2Value", "coValue", "o3Value", "no2Value");
+        }
+        if (spec == SourceSpec.MOIS_ADMM_AVG_AGE_MAIN) {
+            return firstDecimal(row, "avgAge", "avrgAge", "totAvrgAge", "totAvgAge", "maleAvrgAge", "femlAvrgAge", "meanAge", "age", "value", "val", "data");
+        }
+        if (spec == SourceSpec.MOIS_ADMM_HSMB_HH_MAIN) {
+            return firstDecimal(row, "hhCnt", "hshldCnt", "hshldCo", "householdCount", "totHhCnt", "onePrsnHhCnt", "cnt", "count", "value");
+        }
+        if (spec == SourceSpec.MOIS_ADMM_POP_CHANGE_MAIN) {
+            return firstDecimal(row, "popChange", "ppltnChange", "totNmprIncre", "maleNmprIncre", "femlNmprIncre", "incDec", "incDecCnt", "increaseDecrease", "chgPopulation", "totPpltn", "timtNmprCnt", "lsmtNmprCnt", "population", "cnt", "count", "value");
+        }
+        return firstDecimal(row, "value", "val", "data", "cnt", "count", "totalCount", "totNmprCnt", "totPpltn", "population", "avgAge", "hhCnt", "numOfRows");
+    }
+
+    private String observationSourceAreaCode(SourceSpec spec, JsonNode row) {
+        if (isMoisLegalDongSpec(spec)) {
+            return firstText(row, "stdgCd");
+        }
+        String sourceAreaCode = firstText(row, "areaCode", "stdgCd", "admmCd", "admCd", "ctpvCd", "sggCd", "dongCd", "법정동코드");
+        if (!sourceAreaCode.isBlank()) {
+            return sourceAreaCode;
+        }
+        if (spec == SourceSpec.KMA_VILAGE_FCST_MAIN) {
+            String gridX = firstText(row, "nx", "gridX");
+            String gridY = firstText(row, "ny", "gridY");
+            if (!gridX.isBlank() && !gridY.isBlank()) {
+                return "KMA:" + gridX + ':' + gridY;
+            }
+        }
+        if (spec == SourceSpec.AIRKOREA_AIR_QUALITY_MAIN) {
+            String station = firstText(row, "stationCode", "stationName", "망", "측정소명");
+            if (!station.isBlank()) {
+                return "AIR:" + station;
+            }
+        }
+        return "";
+    }
+
+    private String observationSourceAreaName(SourceSpec spec, JsonNode row) {
+        if (isMoisLegalDongSpec(spec)) {
+            return firstText(row, "stdgNm");
+        }
+        String sourceAreaName = firstText(row, "stdgNm", "liNm", "dongNm", "emdNm", "stationName", "stnNm", "areaName", "sggNm", "ctpvNm", "sidoName", "addr");
+        if (!sourceAreaName.isBlank()) {
+            return sourceAreaName;
+        }
+        if (spec == SourceSpec.KMA_VILAGE_FCST_MAIN) {
+            String gridX = firstText(row, "nx", "gridX");
+            String gridY = firstText(row, "ny", "gridY");
+            if (!gridX.isBlank() && !gridY.isBlank()) {
+                return "기상 격자 " + gridX + '/' + gridY;
+            }
+        }
+        return "";
+    }
+
+    private String observationAreaLevel(SourceSpec spec, String sourceAreaCode) {
+        if (isMoisLegalDongSpec(spec)) {
+            return MOIS_LEGAL_DONG_AREA_LEVEL;
+        }
+        if (spec.defaultAreaLevel() != null && !spec.defaultAreaLevel().isBlank()) {
+            return spec.defaultAreaLevel();
+        }
+        if (sourceAreaCode != null && sourceAreaCode.startsWith("KMA:")) {
+            return "GRID";
+        }
+        return null;
+    }
+
+    private boolean shouldSkipObservation(SourceSpec spec, JsonNode row) {
+        return spec.storageType() == StorageType.OBSERVATION
+                && isMoisLegalDongSpec(spec)
+                && !isMoisLegalDongObservationRow(row);
+    }
+
+    private boolean isMoisLegalDongObservationRow(JsonNode row) {
+        return isLegalDongAreaCode(firstText(row, "stdgCd"));
+    }
+
+    private boolean isLegalDongAreaCode(String areaCode) {
+        return areaCode != null
+                && areaCode.matches("\\d{10}")
+                && !areaCode.substring(5).equals("00000");
+    }
+
+    private String observationUnit(SourceSpec spec, JsonNode row) {
+        if (spec == SourceSpec.KMA_VILAGE_FCST_MAIN) {
+            return switch (firstText(row, "category")) {
+                case "T1H" -> "℃";
+                case "RN1" -> "mm";
+                case "UUU", "VVV", "WSD" -> "m/s";
+                case "REH" -> "%";
+                case "VEC" -> "deg";
+                default -> null;
+            };
+        }
+        if (spec == SourceSpec.AIRKOREA_AIR_QUALITY_MAIN) {
+            return "㎍/㎥";
+        }
+        if (spec == SourceSpec.MOIS_ADMM_AVG_AGE_MAIN) {
+            return "세";
+        }
+        if (spec == SourceSpec.MOIS_ADMM_HSMB_HH_MAIN) {
+            return "세대";
+        }
+        if (spec == SourceSpec.MOIS_ADMM_POP_CHANGE_MAIN) {
+            return "명";
+        }
+        return null;
+    }
+
+    private Map<String, Object> observationDimensions(SourceSpec spec, JsonNode row) {
+        Map<String, Object> dimensions = new LinkedHashMap<>();
+        dimensions.put("collector", "dashboard-gis");
+        dimensions.put("sourceCode", spec.sourceCode());
+        putIfNotBlank(dimensions, "category", firstText(row, "category"));
+        putIfNotBlank(dimensions, "metricLabel", observationMetricLabel(spec, row));
+        putIfNotBlank(dimensions, "sidoName", firstText(row, "sidoName", "ctpvNm"));
+        putIfNotBlank(dimensions, "sigunguName", firstText(row, "sggNm"));
+        putIfNotBlank(dimensions, "legalDongCode", firstText(row, "stdgCd"));
+        putIfNotBlank(dimensions, "legalDongName", firstText(row, "stdgNm"));
+        putIfNotBlank(dimensions, "administrativeDongCode", firstText(row, "admmCd"));
+        putIfNotBlank(dimensions, "administrativeDongName", firstText(row, "dongNm"));
+        putIfNotBlank(dimensions, "tong", firstText(row, "tong"));
+        putIfNotBlank(dimensions, "ban", firstText(row, "ban"));
+        putIfNotBlank(dimensions, "stationName", firstText(row, "stationName", "stnNm"));
+        putIfNotBlank(dimensions, "statsYm", firstText(row, "statsYm", "srchYm"));
+        return dimensions;
+    }
+
+    private String observationMetricLabel(SourceSpec spec, JsonNode row) {
+        if (spec == SourceSpec.KMA_VILAGE_FCST_MAIN) {
+            return switch (firstText(row, "category")) {
+                case "T1H" -> "기온";
+                case "RN1" -> "1시간 강수량";
+                case "UUU" -> "동서바람성분";
+                case "VVV" -> "남북바람성분";
+                case "REH" -> "습도";
+                case "PTY" -> "강수형태";
+                case "VEC" -> "풍향";
+                case "WSD" -> "풍속";
+                default -> firstText(row, "category");
+            };
+        }
+        if (spec == SourceSpec.AIRKOREA_AIR_QUALITY_MAIN) {
+            return "PM10";
+        }
+        return "";
+    }
+
+    private void putIfNotBlank(Map<String, Object> map, String key, String value) {
+        if (value != null && !value.isBlank()) {
+            map.put(key, value);
+        }
+    }
+
+    private StoredArea resolveStoredArea(SourceSpec spec, String sourceAreaCode, String sourceAreaName, JsonNode row) {
+        if (spec == SourceSpec.KMA_VILAGE_FCST_MAIN) {
+            String areaCode = firstText(row, "areaCode");
+            if (!areaCode.isBlank()) {
+                return new StoredArea(areaCode, blankToNull(firstText(row, "areaLevel")));
+            }
+        }
+        if (spec == SourceSpec.KMA_VILAGE_FCST_MAIN && sourceAreaCode != null && sourceAreaCode.startsWith("KMA:")) {
+            return new StoredArea(SEOUL_SIDO_AREA_CODE, "SIDO");
+        }
+        if (spec == SourceSpec.AIRKOREA_AIR_QUALITY_MAIN) {
+            StoredArea areaByStationName = resolveAirKoreaArea(row, sourceAreaName);
+            if (areaByStationName.areaCode() != null) {
+                return areaByStationName;
+            }
+        }
+        if (sourceAreaCode == null || sourceAreaCode.isBlank()) {
+            return new StoredArea(null, null);
+        }
+        String sql = """
+                SELECT area_code, level
+                FROM public.sd_area_code
+                WHERE area_code = :sourceAreaCode
+                   OR (
+                       LENGTH(:sourceAreaCode) = 8
+                       AND eupmyeondong_code = :sourceAreaCode
+                   )
+                   OR (
+                       LENGTH(:sourceAreaCode) = 5
+                       AND sigungu_code = :sourceAreaCode
+                   )
+                   OR (
+                       LENGTH(:sourceAreaCode) = 10
+                       AND SUBSTRING(:sourceAreaCode, 6, 5) = '00000'
+                       AND sigungu_code = SUBSTRING(:sourceAreaCode, 1, 5)
+                   )
+                   OR (
+                       LENGTH(:sourceAreaCode) = 2
+                       AND sido_code = :sourceAreaCode
+                   )
+                   OR (
+                       LENGTH(:sourceAreaCode) = 10
+                       AND SUBSTRING(:sourceAreaCode, 9, 2) = '00'
+                       AND eupmyeondong_code = SUBSTRING(:sourceAreaCode, 1, 8)
+                   )
+                ORDER BY
+                    CASE
+                        WHEN area_code = :sourceAreaCode THEN 0
+                        WHEN LENGTH(:sourceAreaCode) = 10
+                             AND SUBSTRING(:sourceAreaCode, 9, 2) = '00'
+                             AND eupmyeondong_code = SUBSTRING(:sourceAreaCode, 1, 8) THEN 1
+                        ELSE 1
+                    END,
+                    area_code
+                LIMIT 1
+                """;
+        List<StoredArea> areas = jdbcTemplate.query(
+                sql,
+                new MapSqlParameterSource("sourceAreaCode", sourceAreaCode.trim()),
+                (rs, rowNum) -> new StoredArea(rs.getString("area_code"), rs.getString("level")));
+        return areas.isEmpty() ? new StoredArea(null, null) : areas.get(0);
+    }
+
+    private StoredArea resolveAirKoreaArea(JsonNode row, String sourceAreaName) {
+        if (sourceAreaName == null || sourceAreaName.isBlank()) {
+            return new StoredArea(null, null);
+        }
+        String stationName = airKoreaStationKey(sourceAreaName);
+        if (stationName.isBlank()) {
+            return new StoredArea(null, null);
+        }
+        String sidoCode = blankToNull(firstText(row, "sidoCode"));
+        String sql = """
+                WITH matched_area AS (
+                    SELECT area_code, level, 1 AS priority
+                    FROM public.sd_area_code
+                    WHERE level = 'SIGUNGU'
+                      AND is_active = TRUE
+                      AND (:sidoCode IS NULL OR sido_code = :sidoCode)
+                      AND (
+                          name = :stationName
+                          OR regexp_replace(name, '(시|군|구)$', '') = :stationName
+                          OR name = :stationName || '시'
+                          OR name = :stationName || '군'
+                          OR name = :stationName || '구'
+                      )
+
+                    UNION ALL
+
+                    SELECT sigungu.area_code, sigungu.level, 2 AS priority
+                    FROM public.sd_area_code station
+                    JOIN public.sd_area_code sigungu
+                        ON sigungu.level = 'SIGUNGU'
+                       AND sigungu.is_active = TRUE
+                       AND sigungu.sigungu_code = station.sigungu_code
+                    WHERE station.level IN ('EUPMYEONDONG', 'RI')
+                      AND station.is_active = TRUE
+                      AND (:sidoCode IS NULL OR station.sido_code = :sidoCode)
+                      AND station.name = :stationName
+                )
+                SELECT area_code, level
+                FROM matched_area
+                ORDER BY priority, area_code
+                LIMIT 1
+                """;
+        List<StoredArea> areas = jdbcTemplate.query(
+                sql,
+                new MapSqlParameterSource()
+                        .addValue("sidoCode", sidoCode)
+                        .addValue("stationName", stationName),
+                (rs, rowNum) -> new StoredArea(rs.getString("area_code"), rs.getString("level")));
+        return areas.isEmpty() ? new StoredArea(null, null) : areas.get(0);
+    }
+
+    private StoredArea resolveAirKoreaSidoFallback(JsonNode row) {
+        String sidoAreaCode = blankToNull(firstText(row, "sidoAreaCode"));
+        if (sidoAreaCode != null) {
+            return new StoredArea(sidoAreaCode, "SIDO");
+        }
+        String sidoCode = blankToNull(firstText(row, "sidoCode"));
+        if (sidoCode == null) {
+            return new StoredArea(null, null);
+        }
+        String sql = """
+                SELECT area_code, level
+                FROM public.sd_area_code
+                WHERE level = 'SIDO'
+                  AND sido_code = :sidoCode
+                  AND is_active = TRUE
+                LIMIT 1
+                """;
+        List<StoredArea> areas = jdbcTemplate.query(
+                sql,
+                new MapSqlParameterSource("sidoCode", sidoCode),
+                (rs, rowNum) -> new StoredArea(rs.getString("area_code"), rs.getString("level")));
+        return areas.isEmpty() ? new StoredArea(null, null) : areas.get(0);
+    }
+
+    private void deleteExistingObservation(MapSqlParameterSource params) {
+        jdbcTemplate.update(deleteExistingObservationSql(), params);
+    }
+
+    private void deleteExistingObservations(MapSqlParameterSource[] params) {
+        if (params.length == 0) {
+            return;
+        }
+        jdbcTemplate.batchUpdate(deleteExistingObservationSql(), params);
+    }
+
+    private String deleteExistingObservationSql() {
+        return """
+                DELETE FROM public.sd_dashboard_area_observation
+                WHERE dataset_code = :datasetCode
+                  AND metric_code = :metricCode
+                  AND COALESCE(area_code, '') = COALESCE(:areaCode, '')
+                  AND COALESCE(source_area_code, '') = COALESCE(:sourceAreaCode, '')
+                  AND COALESCE(grid_x, '') = COALESCE(:gridX, '')
+                  AND COALESCE(grid_y, '') = COALESCE(:gridY, '')
+                  AND base_date = :baseDate
+                  AND COALESCE(base_hour, '') = COALESCE(:baseHour, '')
+                  AND COALESCE(observed_at, TIMESTAMP '1900-01-01 00:00:00')
+                      = COALESCE(:observedAt, TIMESTAMP '1900-01-01 00:00:00')
+                  AND md5(dimensions::text) = md5(CAST(:dimensions AS jsonb)::text)
+                """;
+    }
+
+    private int deleteDashboardObservationsForStatsMonth(SourceSpec spec, String statsYm, List<SigunguArea> areas) {
+        if (areas.isEmpty()) {
+            return 0;
+        }
+        List<String> sigunguCodes = areas.stream()
+                .map(SigunguArea::sigunguCode)
+                .filter(code -> code != null && !code.isBlank())
+                .distinct()
+                .toList();
+        String areaFilter = sigunguCodes.isEmpty() ? "" : """
+                  AND (
+                      SUBSTRING(COALESCE(source_area_code, ''), 1, 5) IN (:sigunguCodes)
+                      OR SUBSTRING(COALESCE(area_code, ''), 1, 5) IN (:sigunguCodes)
+                  )
+                """;
+        String sql = """
+                DELETE FROM public.sd_dashboard_area_observation
+                WHERE dataset_code = :datasetCode
+                  AND base_date = :baseDate
+                  %s
+                """.formatted(areaFilter);
+        LocalDate baseDate = YearMonth.parse(statsYm, STATS_YM_FORMAT).atEndOfMonth();
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("datasetCode", spec.datasetCode())
+                .addValue("baseDate", baseDate);
+        if (!sigunguCodes.isEmpty()) {
+            params.addValue("sigunguCodes", sigunguCodes);
+        }
+        return jdbcTemplate.update(sql, params);
+    }
+
+    private int deleteDashboardObservationsForScope(SourceSpec spec, MoisAreaScope scope) {
+        String sidoCode = blankToNull(scope.sidoCode());
+        String sigunguCode = blankToNull(scope.sigunguCode());
+        String areaFilter = "";
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("datasetCode", spec.datasetCode());
+        if (sidoCode != null || sigunguCode != null) {
+            String codeFilter = "";
+            if (sidoCode != null) {
+                codeFilter += " AND c.sido_code = :sidoCode\n";
+                params.addValue("sidoCode", sidoCode);
+            }
+            if (sigunguCode != null) {
+                codeFilter += " AND c.sigungu_code = :sigunguCode\n";
+                params.addValue("sigunguCode", sigunguCode);
+            }
+            areaFilter = """
+                      AND EXISTS (
+                          SELECT 1
+                          FROM public.sd_area_code c
+                          WHERE c.area_code = o.area_code
+                            %s
+                      )
+                    """.formatted(codeFilter);
+        }
+        String sql = """
+                DELETE FROM public.sd_dashboard_area_observation o
+                WHERE o.dataset_code = :datasetCode
+                  %s
+                """.formatted(areaFilter);
         return jdbcTemplate.update(sql, params);
     }
 
@@ -625,6 +1490,115 @@ public class DashboardGisOpenApiCollectService {
         if (spec == SourceSpec.KECO_EV_CHARGER_MAIN && intValue(params.get("numOfRows")) < 10) {
             params.put("numOfRows", 10);
         }
+        if (isMoisLegalDongSpec(spec)) {
+            params.put("numOfRows", MAX_NUM_OF_ROWS);
+            params.put("lv", "3");
+        }
+        if (spec == SourceSpec.KMA_VILAGE_FCST_MAIN) {
+            applyKmaUltraSrtNcstBaseTime(params);
+        }
+    }
+
+    private void applyKmaUltraSrtNcstBaseTime(Map<String, Object> params) {
+        LocalDateTime baseDateTime = LocalDateTime.now(SEOUL_ZONE)
+                .minusMinutes(45)
+                .withMinute(0)
+                .withSecond(0)
+                .withNano(0);
+        params.put("base_date", baseDateTime.toLocalDate().format(DATE_FORMAT));
+        params.put("base_time", baseDateTime.format(KMA_BASE_TIME_FORMAT));
+    }
+
+    private boolean isMoisLegalDongSpec(SourceSpec spec) {
+        return spec == SourceSpec.MOIS_ADMM_AVG_AGE_MAIN
+                || spec == SourceSpec.MOIS_ADMM_HSMB_HH_MAIN
+                || spec == SourceSpec.MOIS_ADMM_POP_CHANGE_MAIN;
+    }
+
+    private boolean usesAreaCollectionScope(SourceSpec spec) {
+        return isMoisLegalDongSpec(spec)
+                || spec == SourceSpec.AIRKOREA_AIR_QUALITY_MAIN
+                || spec == SourceSpec.KMA_VILAGE_FCST_MAIN;
+    }
+
+    private MoisAreaScope resolveMoisLegalDongScope(String keyword) {
+        return resolveAreaCollectionScope(keyword);
+    }
+
+    private MoisAreaScope resolveAreaCollectionScope(String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return new MoisAreaScope(null, null);
+        }
+        if (keyword != null && keyword.equalsIgnoreCase("all")) {
+            return new MoisAreaScope(null, null);
+        }
+        String normalized = keyword.trim();
+        if (normalized.matches("\\d{2}")) {
+            return new MoisAreaScope(normalized, null);
+        }
+        if (normalized.matches("\\d{5}")) {
+            return new MoisAreaScope(null, normalized);
+        }
+        if (normalized.matches("\\d{10}")) {
+            return resolveAreaCodeScope(normalized);
+        }
+        return resolveAreaNameScope(normalized).orElse(new MoisAreaScope(null, null));
+    }
+
+    private MoisAreaScope resolveAreaCodeScope(String areaCode) {
+        String sql = """
+                SELECT sido_code, sigungu_code, level
+                FROM public.sd_area_code
+                WHERE area_code = :areaCode
+                  AND is_active = TRUE
+                LIMIT 1
+                """;
+        List<MoisAreaScope> scopes = jdbcTemplate.query(
+                sql,
+                new MapSqlParameterSource("areaCode", areaCode),
+                (rs, rowNum) -> {
+                    String level = rs.getString("level");
+                    String sidoCode = rs.getString("sido_code");
+                    String sigunguCode = rs.getString("sigungu_code");
+                    if ("SIDO".equals(level)) {
+                        return new MoisAreaScope(sidoCode, null);
+                    }
+                    return new MoisAreaScope(null, sigunguCode);
+                });
+        if (!scopes.isEmpty()) {
+            return scopes.get(0);
+        }
+        String sigunguCode = areaCode.length() >= 5 ? areaCode.substring(0, 5) : null;
+        return new MoisAreaScope(null, sigunguCode);
+    }
+
+    private Optional<MoisAreaScope> resolveAreaNameScope(String areaName) {
+        String sql = """
+                SELECT sido_code, sigungu_code, level
+                FROM public.sd_area_code
+                WHERE is_active = TRUE
+                  AND (name = :areaName OR full_name = :areaName)
+                ORDER BY
+                    CASE level
+                        WHEN 'SIDO' THEN 1
+                        WHEN 'SIGUNGU' THEN 2
+                        ELSE 3
+                    END
+                LIMIT 1
+                """;
+        List<MoisAreaScope> scopes = jdbcTemplate.query(
+                sql,
+                new MapSqlParameterSource("areaName", areaName),
+                (rs, rowNum) -> {
+                    String level = rs.getString("level");
+                    String sidoCode = rs.getString("sido_code");
+                    String sigunguCode = rs.getString("sigungu_code");
+                    if ("SIDO".equals(level)) {
+                        return new MoisAreaScope(sidoCode, null);
+                    }
+                    return new MoisAreaScope(null, sigunguCode);
+                });
+        return scopes.isEmpty() ? Optional.empty() : Optional.of(scopes.get(0));
     }
 
     private String ensureAuthParams(SourceSpec spec, Map<String, Object> params) {
@@ -696,6 +1670,72 @@ public class DashboardGisOpenApiCollectService {
                     (SELECT COUNT(*)::bigint FROM public.sd_dashboard_layer_catalog WHERE dataset_code = :datasetCode) AS layer_count
                 """;
         return jdbcTemplate.queryForMap(sql, new MapSqlParameterSource("datasetCode", datasetCode));
+    }
+
+    private List<String> moisLegalDongDatasetCodes() {
+        return List.of(
+                SourceSpec.MOIS_ADMM_AVG_AGE_MAIN.datasetCode(),
+                SourceSpec.MOIS_ADMM_HSMB_HH_MAIN.datasetCode(),
+                SourceSpec.MOIS_ADMM_POP_CHANGE_MAIN.datasetCode());
+    }
+
+    private Map<String, Object> countMoisLegalDongObservationRows(List<String> datasetCodes) {
+        String sql = """
+                SELECT
+                    COUNT(*)::bigint AS total_count,
+                    COUNT(*) FILTER (
+                        WHERE COALESCE(raw_payload ->> 'stdgCd', '') ~ '^[0-9]{10}$'
+                          AND SUBSTRING(raw_payload ->> 'stdgCd' FROM 6 FOR 5) <> '00000'
+                    )::bigint AS legal_dong_count,
+                    COUNT(*) FILTER (
+                        WHERE COALESCE(raw_payload ->> 'stdgCd', '') !~ '^[0-9]{10}$'
+                           OR SUBSTRING(raw_payload ->> 'stdgCd' FROM 6 FOR 5) = '00000'
+                    )::bigint AS invalid_count
+                FROM public.sd_dashboard_area_observation
+                WHERE dataset_code IN (:datasetCodes)
+                """;
+        return jdbcTemplate.queryForMap(sql, new MapSqlParameterSource("datasetCodes", datasetCodes));
+    }
+
+    private int deleteInvalidMoisLegalDongObservations(List<String> datasetCodes) {
+        String sql = """
+                DELETE FROM public.sd_dashboard_area_observation
+                WHERE dataset_code IN (:datasetCodes)
+                  AND (
+                      COALESCE(raw_payload ->> 'stdgCd', '') !~ '^[0-9]{10}$'
+                      OR SUBSTRING(raw_payload ->> 'stdgCd' FROM 6 FOR 5) = '00000'
+                  )
+                """;
+        return jdbcTemplate.update(sql, new MapSqlParameterSource("datasetCodes", datasetCodes));
+    }
+
+    private int normalizeMoisLegalDongObservations(List<String> datasetCodes) {
+        String sql = """
+                UPDATE public.sd_dashboard_area_observation
+                SET area_level = :areaLevel,
+                    source_area_code = raw_payload ->> 'stdgCd',
+                    source_area_name = COALESCE(NULLIF(raw_payload ->> 'stdgNm', ''), source_area_name),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE dataset_code IN (:datasetCodes)
+                  AND COALESCE(raw_payload ->> 'stdgCd', '') ~ '^[0-9]{10}$'
+                  AND SUBSTRING(raw_payload ->> 'stdgCd' FROM 6 FOR 5) <> '00000'
+                """;
+        return jdbcTemplate.update(sql, new MapSqlParameterSource()
+                .addValue("datasetCodes", datasetCodes)
+                .addValue("areaLevel", MOIS_LEGAL_DONG_AREA_LEVEL));
+    }
+
+    private int normalizeMoisLegalDongDatasetCatalog(List<String> datasetCodes) {
+        String sql = """
+                UPDATE public.sd_dashboard_dataset
+                SET default_area_level = :areaLevel,
+                    spatial_join_strategy = 'LEGAL_DONG_CODE',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE dataset_code IN (:datasetCodes)
+                """;
+        return jdbcTemplate.update(sql, new MapSqlParameterSource()
+                .addValue("datasetCodes", datasetCodes)
+                .addValue("areaLevel", MOIS_LEGAL_DONG_AREA_LEVEL));
     }
 
     private List<SourceSpec> resolveTargets(String sourceCode) {
@@ -893,24 +1933,6 @@ public class DashboardGisOpenApiCollectService {
         if (value != null && !value.isBlank()) {
             return value.trim();
         }
-        if ("DATA_GO_KR_SERVICE_KEY".equals(name)) {
-            String dataGoKey = directConfiguredValue("DATA_GO_KR_OPEN_API_KEY");
-            if (!dataGoKey.isBlank()) {
-                return dataGoKey;
-            }
-        }
-        if ("DATA_GO_KR_OPEN_API_KEY".equals(name)) {
-            String dataGoKey = directConfiguredValue("DATA_GO_KR_SERVICE_KEY");
-            if (!dataGoKey.isBlank()) {
-                return dataGoKey;
-            }
-        }
-        if (("DATA_GO_KR_SERVICE_KEY".equals(name) || "DATA_GO_KR_OPEN_API_KEY".equals(name))) {
-            String moisKey = directConfiguredValue("MOIS_OPEN_API_KEY");
-            if (!moisKey.isBlank()) {
-                return moisKey;
-            }
-        }
         return "";
     }
 
@@ -937,6 +1959,9 @@ public class DashboardGisOpenApiCollectService {
 
     private LocalDate baseDate(JsonNode row) {
         String date = firstText(row, "baseDate", "base_date", "fcstDate", "tm", "dataTime", "statsYm");
+        if (date.matches("\\d{4}-\\d{2}-\\d{2}.*")) {
+            return LocalDate.parse(date.substring(0, 10));
+        }
         if (date.matches("\\d{6}")) {
             return YearMonth.parse(date, STATS_YM_FORMAT).atEndOfMonth();
         }
@@ -947,6 +1972,10 @@ public class DashboardGisOpenApiCollectService {
     }
 
     private String baseHour(JsonNode row) {
+        String dateTime = firstText(row, "dataTime", "tm");
+        if (dateTime.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}.*")) {
+            return dateTime.substring(11, 13);
+        }
         String hour = firstText(row, "baseTime", "base_time", "fcstTime", "hour");
         if (hour.matches("\\d{4}")) {
             return hour.substring(0, 2);
@@ -954,6 +1983,21 @@ public class DashboardGisOpenApiCollectService {
         if (hour.matches("\\d{1,2}")) {
             return hour.length() == 1 ? "0" + hour : hour;
         }
+        return null;
+    }
+
+    private LocalDateTime observedAt(JsonNode row) {
+        String dataTime = firstText(row, "dataTime", "tm");
+        if (dataTime.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}.*")) {
+            return LocalDateTime.parse(dataTime.substring(0, 16), AIRKOREA_DATE_TIME_FORMAT);
+        }
+
+        String baseDate = firstText(row, "baseDate", "base_date", "fcstDate");
+        String baseTime = firstText(row, "baseTime", "base_time", "fcstTime");
+        if (baseDate.matches("\\d{8}") && baseTime.matches("\\d{4}")) {
+            return LocalDateTime.parse(baseDate + baseTime, KMA_BASE_DATE_TIME_FORMAT);
+        }
+
         return null;
     }
 
@@ -1114,6 +2158,66 @@ public class DashboardGisOpenApiCollectService {
         return keyword == null || keyword.isBlank() ? "서울특별시" : keyword.trim();
     }
 
+    private String airKoreaSidoName(SidoArea area) {
+        return switch (area.sidoCode()) {
+            case "11" -> "서울";
+            case "26" -> "부산";
+            case "27" -> "대구";
+            case "28" -> "인천";
+            case "29" -> "광주";
+            case "30" -> "대전";
+            case "31" -> "울산";
+            case "36" -> "세종";
+            case "41" -> "경기";
+            case "42", "51" -> "강원";
+            case "43" -> "충북";
+            case "44" -> "충남";
+            case "45" -> "전북";
+            case "46" -> "전남";
+            case "47" -> "경북";
+            case "48" -> "경남";
+            case "49" -> "제주";
+            default -> area.name();
+        };
+    }
+
+    private String airKoreaStationKey(String stationName) {
+        if (stationName == null) {
+            return "";
+        }
+        return stationName
+                .replaceAll("\\(.*?\\)", "")
+                .replace("측정소", "")
+                .trim();
+    }
+
+    private KmaGrid toKmaGrid(double longitude, double latitude) {
+        double re = 6371.00877 / 5.0;
+        double slat1 = 30.0 * Math.PI / 180.0;
+        double slat2 = 60.0 * Math.PI / 180.0;
+        double olon = 126.0 * Math.PI / 180.0;
+        double olat = 38.0 * Math.PI / 180.0;
+        double sn = Math.tan(Math.PI * 0.25 + slat2 * 0.5) / Math.tan(Math.PI * 0.25 + slat1 * 0.5);
+        sn = Math.log(Math.cos(slat1) / Math.cos(slat2)) / Math.log(sn);
+        double sf = Math.tan(Math.PI * 0.25 + slat1 * 0.5);
+        sf = Math.pow(sf, sn) * Math.cos(slat1) / sn;
+        double ro = Math.tan(Math.PI * 0.25 + olat * 0.5);
+        ro = re * sf / Math.pow(ro, sn);
+        double ra = Math.tan(Math.PI * 0.25 + (latitude * Math.PI / 180.0) * 0.5);
+        ra = re * sf / Math.pow(ra, sn);
+        double theta = longitude * Math.PI / 180.0 - olon;
+        if (theta > Math.PI) {
+            theta -= 2.0 * Math.PI;
+        }
+        if (theta < -Math.PI) {
+            theta += 2.0 * Math.PI;
+        }
+        theta *= sn;
+        int x = (int) Math.floor(ra * Math.sin(theta) + 43.0 + 0.5);
+        int y = (int) Math.floor(ro - ra * Math.cos(theta) + 136.0 + 0.5);
+        return new KmaGrid(x, y);
+    }
+
     private String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value;
     }
@@ -1136,6 +2240,29 @@ public class DashboardGisOpenApiCollectService {
     }
 
     private record SidoArea(String areaCode, String sidoCode, String name, String fullName) {
+    }
+
+    private record SigunguArea(String areaCode, String sidoCode, String sigunguCode, String name, String fullName) {
+    }
+
+    private record MoisAreaScope(String sidoCode, String sigunguCode) {
+    }
+
+    private record WeatherGridArea(
+            String areaCode,
+            String areaLevel,
+            String name,
+            String fullName,
+            double longitude,
+            double latitude,
+            int gridX,
+            int gridY) {
+    }
+
+    private record KmaGrid(int x, int y) {
+    }
+
+    private record StoredArea(String areaCode, String level) {
     }
 
     private record RegionCount(SidoArea area, BigDecimal count, JsonNode rawPayload) {
@@ -1171,11 +2298,11 @@ public class DashboardGisOpenApiCollectService {
         private static final SourceSpec KECO_EV_CHARGER_MAIN = evCharger();
         private static final SourceSpec KMA_VILAGE_FCST_MAIN = dataGo("KMA_VILAGE_FCST", "KMA_VILAGE_FCST_MAIN", StorageType.OBSERVATION, null, "/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst", p("dataType", "JSON", "base_date", "{today}", "base_time", "0600", "nx", "60", "ny", "127"));
         private static final SourceSpec KOSIS_OPEN_API_MAIN = blocked("KOSIS_OPEN_API", "KOSIS_OPEN_API_MAIN", StorageType.OBSERVATION, null, "KOSIS 통계표 orgId/tblId/itmId 등 조회 조건과 KOSIS_OPEN_API_KEY가 필요합니다.");
-        private static final SourceSpec MOIS_ADMM_AVG_AGE_MAIN = mois("MOIS_ADMM_AVG_AGE", "MOIS_ADMM_AVG_AGE_MAIN", "/1741000/admmAvgAge/selectAdmmAvgAge");
-        private static final SourceSpec MOIS_ADMM_HSMB_HH_MAIN = mois("MOIS_ADMM_HSMB_HH", "MOIS_ADMM_HSMB_HH_MAIN", "/1741000/admmHsmbHh/selectAdmmHsmbHh");
-        private static final SourceSpec MOIS_ADMM_POP_CHANGE_MAIN = mois("MOIS_ADMM_POP_CHANGE", "MOIS_ADMM_POP_CHANGE_MAIN", "/1741000/admmPopChange/selectAdmmPopChange");
+        private static final SourceSpec MOIS_ADMM_AVG_AGE_MAIN = moisLegalDong("MOIS_ADMM_AVG_AGE", "MOIS_ADMM_AVG_AGE_MAIN", "/1741000/stdgSexdPpltnAvrgAge/selectStdgSexdPpltnAvrgAge");
+        private static final SourceSpec MOIS_ADMM_HSMB_HH_MAIN = moisLegalDong("MOIS_ADMM_HSMB_HH", "MOIS_ADMM_HSMB_HH_MAIN", "/1741000/stdgHsmbHh/selectStdgHsmbHh");
+        private static final SourceSpec MOIS_ADMM_POP_CHANGE_MAIN = moisLegalDong("MOIS_ADMM_POP_CHANGE", "MOIS_ADMM_POP_CHANGE_MAIN", "/1741000/stdgSexdPpltnIrds/selectStdgSexdPpltnIrds");
         private static final SourceSpec MOIS_ADMM_PPLTN_HH_STUS_MAIN = mois("MOIS_ADMM_PPLTN_HH_STUS", "MOIS_ADMM_PPLTN_HH_STUS_MAIN", "/1741000/admmPpltnHhStus/selectAdmmPpltnHhStus");
-        private static final SourceSpec MOIS_ADMM_SEXD_AGE_PPLTN_MAIN = new SourceSpec("MOIS_ADMM_SEXD_AGE_PPLTN", "MOIS_ADMM_SEXD_AGE_PPLTN_MAIN", StorageType.OBSERVATION, "EUPMYEONDONG", "https://apis.data.go.kr", "/1741000/admmSexdAgePpltn/selectAdmmSexdAgePpltn", List.of(new AuthParam("serviceKey", "MOIS_OPEN_API_KEY")), moisParams(), null);
+        private static final SourceSpec MOIS_ADMM_SEXD_AGE_PPLTN_MAIN = new SourceSpec("MOIS_ADMM_SEXD_AGE_PPLTN", "MOIS_ADMM_SEXD_AGE_PPLTN_MAIN", StorageType.OBSERVATION, "EUPMYEONDONG", "http://apis.data.go.kr", "/1741000/admmSexdAgePpltn/selectAdmmSexdAgePpltn", List.of(new AuthParam("serviceKey", "MOIS_OPEN_API_KEY")), moisParams(), null);
         private static final SourceSpec SEMAS_STORE_INFO_MAIN = dataGo("SEMAS_STORE_INFO", "SEMAS_STORE_INFO_MAIN", StorageType.FEATURE, null, "/B553077/api/open/sdsc2/storeListInDong", p("type", "json", "divId", "adongCd", "key", "1168064000"));
         private static final SourceSpec SGIS_SOPEN_API_MAIN = blocked("SGIS_SOPEN_API", "SGIS_SOPEN_API_MAIN", StorageType.OBSERVATION, "SIGUNGU", "SGIS_CONSUMER_KEY/SGIS_CONSUMER_SECRET 토큰 발급과 세부 통계 operation 매핑이 필요합니다.");
         private static final SourceSpec VWORLD_WMS_WFS_MAIN = blocked("VWORLD_WMS_WFS", "VWORLD_WMS_WFS_MAIN", StorageType.LAYER, null, "VWORLD_API_KEY와 WFS typeName/layerName 확정이 필요합니다.");
@@ -1269,11 +2396,11 @@ public class DashboardGisOpenApiCollectService {
         }
 
         private static SourceSpec dataGo(String sourceCode, String datasetCode, StorageType storageType, String defaultAreaLevel, String path, Map<String, String> params) {
-            return new SourceSpec(sourceCode, datasetCode, storageType, defaultAreaLevel, "https://apis.data.go.kr", path, List.of(new AuthParam("serviceKey", "DATA_GO_KR_SERVICE_KEY")), params, null);
+            return new SourceSpec(sourceCode, datasetCode, storageType, defaultAreaLevel, "https://apis.data.go.kr", path, List.of(new AuthParam("serviceKey", "MOIS_OPEN_API_KEY")), params, null);
         }
 
         private static SourceSpec standard(String sourceCode, String datasetCode, StorageType storageType, String defaultAreaLevel, String path, Map<String, String> params) {
-            return new SourceSpec(sourceCode, datasetCode, storageType, defaultAreaLevel, "https://api.data.go.kr", path, List.of(new AuthParam("serviceKey", "DATA_GO_KR_SERVICE_KEY")), params, null);
+            return new SourceSpec(sourceCode, datasetCode, storageType, defaultAreaLevel, "https://api.data.go.kr", path, List.of(new AuthParam("serviceKey", "MOIS_OPEN_API_KEY")), params, null);
         }
 
         private static SourceSpec evCharger() {
@@ -1290,7 +2417,11 @@ public class DashboardGisOpenApiCollectService {
         }
 
         private static SourceSpec mois(String sourceCode, String datasetCode, String path) {
-            return new SourceSpec(sourceCode, datasetCode, StorageType.OBSERVATION, "EUPMYEONDONG", "https://apis.data.go.kr", path, List.of(new AuthParam("serviceKey", "MOIS_OPEN_API_KEY")), moisParams(), null);
+            return new SourceSpec(sourceCode, datasetCode, StorageType.OBSERVATION, "EUPMYEONDONG", "http://apis.data.go.kr", path, List.of(new AuthParam("serviceKey", "MOIS_OPEN_API_KEY")), moisParams(), null);
+        }
+
+        private static SourceSpec moisLegalDong(String sourceCode, String datasetCode, String path) {
+            return new SourceSpec(sourceCode, datasetCode, StorageType.OBSERVATION, MOIS_LEGAL_DONG_AREA_LEVEL, "http://apis.data.go.kr", path, List.of(new AuthParam("serviceKey", "MOIS_OPEN_API_KEY")), moisLegalDongParams(), null);
         }
 
         private static SourceSpec blocked(String sourceCode, String datasetCode, StorageType storageType, String defaultAreaLevel, String reason) {
@@ -1299,6 +2430,10 @@ public class DashboardGisOpenApiCollectService {
 
         private static Map<String, String> moisParams() {
             return p("admmCd", "0000000000", "srchFrYm", "{statsYm}", "srchToYm", "{statsYm}", "lv", "1", "regSeCd", "1", "type", "JSON");
+        }
+
+        private static Map<String, String> moisLegalDongParams() {
+            return p("stdgCd", "0000000000", "srchFrYm", "{statsYm}", "srchToYm", "{statsYm}", "lv", "3", "type", "JSON");
         }
 
         private static Map<String, String> p(String... values) {

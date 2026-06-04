@@ -346,7 +346,7 @@ public class DashboardGisCatalogSeedService {
             return "VWORLD_API_KEY";
         }
         if (officialUrl.contains("data.go.kr")) {
-            return "DATA_GO_KR_SERVICE_KEY";
+            return "MOIS_OPEN_API_KEY";
         }
         return "OFFICIAL_API_KEY_REQUIRED";
     }
@@ -419,6 +419,9 @@ public class DashboardGisCatalogSeedService {
 
     private String inferDefaultAreaLevel(String spatialKey) {
         String text = lower(spatialKey);
+        if (text.contains("법정동")) {
+            return "LEGAL_DONG";
+        }
         if (text.contains("읍면동") || text.contains("행정동") || text.contains("행정기관코드")) {
             return "EUPMYEONDONG";
         }

@@ -26,23 +26,22 @@ public class DataCollectClient {
     private final RestClient calspiaRestClient;
     private final String seoulKey;
     private final String moisKey;
-    private final String dataGoKrKey;
+    private final String publicDataKey;
     private final String calspiaKey;
 
     public DataCollectClient(
         @Value("${seoul.open-api.base-url}") String seoulBaseUrl,
         @Value("${seoul.open-api.key}") String seoulKey,
-        @Value("${MOIS_OPEN_API_BASE_URL:https://apis.data.go.kr}") String moisBaseUrl,
+        @Value("${MOIS_OPEN_API_BASE_URL:http://apis.data.go.kr}") String moisBaseUrl,
         @Value("${MOIS_OPEN_API_KEY:}") String moisKey,
         @Value("${DATA_GO_KR_OPEN_API_BASE_URL:https://apis.data.go.kr}") String dataGoKrBaseUrl,
-        @Value("${DATA_GO_KR_OPEN_API_KEY:}") String dataGoKrKey,
         @Value("${STANDARD_DATA_OPEN_API_BASE_URL:https://api.data.go.kr}") String standardDataBaseUrl,
         @Value("${CALSPIA_OPEN_API_BASE_URL:https://www.calspia.go.kr}") String calspiaBaseUrl,
         @Value("${CALSPIA_OPEN_API_KEY:}") String calspiaKey
     ){
         this.seoulKey = seoulKey;
         this.moisKey = resolveValue(moisKey, "MOIS_OPEN_API_KEY");
-        this.dataGoKrKey = resolvePublicDataKey(dataGoKrKey);
+        this.publicDataKey = this.moisKey;
         this.calspiaKey = resolveValue(calspiaKey, "CALSPIA_OPEN_API_KEY");
         this.seoulRestClient = RestClient.builder()
             .baseUrl(seoulBaseUrl)
@@ -97,13 +96,13 @@ public class DataCollectClient {
     }
 
     public String callDataGoKrOpenApi(String path, Map<String, ?> queryParams) {
-        if (dataGoKrKey == null || dataGoKrKey.isBlank()) {
-            throw new IllegalStateException("DATA_GO_KR_OPEN_API_KEY 또는 MOIS_OPEN_API_KEY 환경변수가 설정되지 않았습니다.");
+        if (publicDataKey == null || publicDataKey.isBlank()) {
+            throw new IllegalStateException("MOIS_OPEN_API_KEY 환경변수가 설정되지 않았습니다.");
         }
 
         return dataGoKrRestClient.get()
                 .uri(uriBuilder -> {
-                    var builder = uriBuilder.path(path).queryParam("serviceKey", dataGoKrKey);
+                    var builder = uriBuilder.path(path).queryParam("serviceKey", publicDataKey);
                     queryParams.forEach(builder::queryParam);
                     return builder.build();
                 })
@@ -112,13 +111,13 @@ public class DataCollectClient {
     }
 
     public String callStandardDataOpenApi(String path, Map<String, ?> queryParams) {
-        if (dataGoKrKey == null || dataGoKrKey.isBlank()) {
-            throw new IllegalStateException("DATA_GO_KR_OPEN_API_KEY 또는 MOIS_OPEN_API_KEY 환경변수가 설정되지 않았습니다.");
+        if (publicDataKey == null || publicDataKey.isBlank()) {
+            throw new IllegalStateException("MOIS_OPEN_API_KEY 환경변수가 설정되지 않았습니다.");
         }
 
         return standardDataRestClient.get()
                 .uri(uriBuilder -> {
-                    var builder = uriBuilder.path(path).queryParam("serviceKey", dataGoKrKey);
+                    var builder = uriBuilder.path(path).queryParam("serviceKey", publicDataKey);
                     queryParams.forEach(builder::queryParam);
                     return builder.build();
                 })
@@ -223,14 +222,6 @@ public class DataCollectClient {
         }
 
         return readDotenvValue(envName);
-    }
-
-    private String resolvePublicDataKey(String configuredValue) {
-        String resolved = resolveValue(configuredValue, "DATA_GO_KR_OPEN_API_KEY");
-        if (resolved != null && !resolved.isBlank()) {
-            return resolved;
-        }
-        return resolveValue("", "MOIS_OPEN_API_KEY");
     }
 
     private String readDotenvValue(String envName) {
