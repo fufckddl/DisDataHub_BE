@@ -113,5 +113,43 @@ public class GisReportServiceImpl implements GisReportService{
             throw new RuntimeException("삭제할 GIS 오류제보 게시글을 찾을 수 없습니다.");
         }
     }
+
+
+    @Transactional
+    @Override
+    public void updateMyGisReport(
+            Long postId,
+            Integer loginUserId,
+            GisReportCreateRequestDto requestDto
+    ) {
+        requestDto.setPostId(postId);
+        requestDto.setUserId(loginUserId);
+
+        if (requestDto.getVisibilityStatus() == null) {
+            requestDto.setVisibilityStatus("PUBLIC");
+        }
+
+        int postUpdateCount = gisReportSqlMapper.updateMyGisReportPost(requestDto);
+
+        if (postUpdateCount == 0) {
+            throw new RuntimeException("수정 권한이 없거나 게시글을 찾을 수 없습니다.");
+        }
+
+        int detailUpdateCount = gisReportSqlMapper.updateMyGisReportDetail(requestDto);
+
+        if (detailUpdateCount == 0) {
+            throw new RuntimeException("수정할 GIS 오류제보 상세 정보를 찾을 수 없습니다.");
+        }
+    }
+
+    @Transactional
+    @Override
+    public void deleteMyGisReport(Long postId, Integer loginUserId) {
+        int deleteCount = gisReportSqlMapper.deleteMyGisReportPost(postId, loginUserId);
+
+        if (deleteCount == 0) {
+            throw new RuntimeException("삭제 권한이 없거나 게시글을 찾을 수 없습니다.");
+        }
+    }
 }
 

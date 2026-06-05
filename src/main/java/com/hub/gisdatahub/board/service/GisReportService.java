@@ -31,4 +31,14 @@ public interface GisReportService {
 
     // 관리자 삭제
     public void deleteAdminGisReport(Long postId);
+
+    // 사용자 본인 GIS 오류제보 수정
+    public void updateMyGisReport(
+            Long postId,
+            Integer loginUserId,
+            GisReportCreateRequestDto requestDto
+    );
+
+    // 사용자 본인 GIS 오류제보 삭제
+    public void deleteMyGisReport(Long postId, Integer loginUserId);
 }

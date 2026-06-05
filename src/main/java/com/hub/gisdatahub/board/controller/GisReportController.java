@@ -45,7 +45,18 @@ public class GisReportController {
     }
 
     @PostMapping("createGisReport")
-    public Map<String, Object> createGisReport(@RequestBody GisReportCreateRequestDto requestDto) {
+    public Map<String, Object> createGisReport(
+            @RequestBody GisReportCreateRequestDto requestDto,
+            Authentication authentication
+    ) {
+        if (authentication == null || !authentication.isAuthenticated()) {
+            throw new RuntimeException("로그인이 필요합니다.");
+        }
+
+        Integer loginUserId = Integer.parseInt((String) authentication.getPrincipal());
+
+        requestDto.setUserId(loginUserId);
+
         Map<String, Object> response = new HashMap<>();
 
         gisReportService.createGisReport(requestDto);
@@ -57,15 +68,31 @@ public class GisReportController {
     }
 
     @GetMapping("{postId}")
-    public Map<String, Object> findGisPostDetail(@PathVariable("postId") Long postId) {
+    public Map<String, Object> findGisPostDetail(
+            @PathVariable("postId") Long postId,
+            Authentication authentication
+    ) {
         Map<String, Object> response = new HashMap<>();
 
         GisReportDetailDto gisReportDetail = gisReportService.getGisReportDetail(postId);
+
         List<GisReportProcessHistoryDto> processHistoryList =
                 gisReportService.getGisReportProcessHistoryList(postId);
 
+        boolean isOwner = false;
+
+        if (authentication != null && authentication.isAuthenticated() && gisReportDetail != null) {
+            Integer loginUserId = Integer.parseInt((String) authentication.getPrincipal());
+
+            if (gisReportDetail.getUserId() != null) {
+                isOwner = String.valueOf(loginUserId)
+                        .equals(String.valueOf(gisReportDetail.getUserId()));
+            }
+        }
+
         response.put("gisReportDetail", gisReportDetail);
         response.put("processHistoryList", processHistoryList);
+        response.put("isOwner", isOwner);
         response.put("result", "success");
 
         return response;
@@ -136,6 +163,49 @@ public class GisReportController {
         Map<String, Object> response = new HashMap<>();
 
         gisReportService.deleteAdminGisReport(postId);
+
+        response.put("result", "success");
+
+        return response;
+    }
+
+    // 사용자 본인 GIS 오류제보 수정
+    @PutMapping("{postId}")
+    public Map<String, Object> updateMyGisReport(
+            @PathVariable("postId") Long postId,
+            @RequestBody GisReportCreateRequestDto requestDto,
+            Authentication authentication
+    ) {
+        if (authentication == null || !authentication.isAuthenticated()) {
+            throw new RuntimeException("로그인이 필요합니다.");
+        }
+
+        Integer loginUserId = Integer.parseInt((String) authentication.getPrincipal());
+
+        Map<String, Object> response = new HashMap<>();
+
+        gisReportService.updateMyGisReport(postId, loginUserId, requestDto);
+
+        response.put("result", "success");
+
+        return response;
+    }
+
+    // 사용자 본인 GIS 오류제보 삭제
+    @DeleteMapping("{postId}")
+    public Map<String, Object> deleteMyGisReport(
+            @PathVariable("postId") Long postId,
+            Authentication authentication
+    ) {
+        if (authentication == null || !authentication.isAuthenticated()) {
+            throw new RuntimeException("로그인이 필요합니다.");
+        }
+
+        Integer loginUserId = Integer.parseInt((String) authentication.getPrincipal());
+
+        Map<String, Object> response = new HashMap<>();
+
+        gisReportService.deleteMyGisReport(postId, loginUserId);
 
         response.put("result", "success");
 

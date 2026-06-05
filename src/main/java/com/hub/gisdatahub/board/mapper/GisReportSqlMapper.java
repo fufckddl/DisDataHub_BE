@@ -39,4 +39,16 @@ public interface GisReportSqlMapper {
 
     // 관리자 삭제
     public int deleteAdminGisReportPost(Long postId);
+
+    // 사용자 본인 GIS 오류제보 공통 게시글 수정
+    public int updateMyGisReportPost(GisReportCreateRequestDto requestDto);
+
+    // 사용자 본인 GIS 오류제보 상세 정보 수정
+    public int updateMyGisReportDetail(GisReportCreateRequestDto requestDto);
+
+    // 사용자 본인 GIS 오류제보 삭제
+    public int deleteMyGisReportPost(
+        @Param("postId") Long postId,
+        @Param("userId") Integer userId
+    );
 }
