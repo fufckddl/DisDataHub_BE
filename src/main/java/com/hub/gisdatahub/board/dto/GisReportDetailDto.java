@@ -8,6 +8,7 @@ import lombok.Data;
 @Data
 public class GisReportDetailDto {
     private Long postId;
+    private Integer userId;
     private String reportCategoryCode;
     private String errorTypeCode;
     private String processStatusCode;
