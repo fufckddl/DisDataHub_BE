@@ -12,4 +12,8 @@ public class DatasetDownloadPageDto {
     private DatasetStatDto stats;   // 
     private DownloadDatasetFileDto sourceFile; //원본 파일
     private List<String> availableFormats; // 다운로드 가능한 형식 목록
+    private List<DownloadFormatOptionDto> downloadFormats;
+    private DownloadAttributePreviewDto attributePreview;
+    private List<DownloadDatasetListItemDto> relatedDatasets;
+    private Boolean favorite;
 }

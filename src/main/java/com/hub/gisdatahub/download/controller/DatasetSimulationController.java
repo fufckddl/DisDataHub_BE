@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.hub.gisdatahub.download.dto.PointRadiusSimulationRequestDto;
 import com.hub.gisdatahub.download.dto.PointRadiusSimulationResponseDto;
+import com.hub.gisdatahub.download.dto.SimulationAreaMeasureRequestDto;
+import com.hub.gisdatahub.download.dto.SimulationAreaMeasureResponseDto;
 import com.hub.gisdatahub.download.service.DatasetSimulationService;
 
 @RestController
@@ -29,6 +31,16 @@ public class DatasetSimulationController {
     ) {
         Integer userId = resolveAuthenticatedUserId(authentication);
         return datasetSimulationService.runPointRadiusSimulation(datasetId, requestDto, userId);
+    }
+
+    @PostMapping("/datasets/{datasetId}/measure-area")
+    public SimulationAreaMeasureResponseDto measurePolygonArea(
+            @PathVariable("datasetId") Long datasetId,
+            @RequestBody SimulationAreaMeasureRequestDto requestDto,
+            Authentication authentication
+    ) {
+        Integer userId = resolveAuthenticatedUserId(authentication);
+        return datasetSimulationService.measurePolygonArea(datasetId, requestDto, userId);
     }
 
     private Integer resolveAuthenticatedUserId(Authentication authentication) {

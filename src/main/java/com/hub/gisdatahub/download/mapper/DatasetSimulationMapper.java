@@ -34,4 +34,6 @@ public interface DatasetSimulationMapper {
             @Param("radius") Integer radius,
             @Param("limit") Integer limit
     );
+
+    Double calculatePolygonAreaSquareMeters(@Param("polygonWkt") String polygonWkt);
 }
