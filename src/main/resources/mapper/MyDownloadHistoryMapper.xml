@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.hub.gisdatahub.download.mapper.MyDownloadHistoryMapper">
+
+    <sql id="myDownloadHistoryFromWhere">
+        from sd_download_log l
+        inner join sd_gis_dataset d on l.dataset_id = d.dataset_id
+        left join sd_gis_dataset_file f on l.file_id = f.file_id
+        left join sd_data_category c on d.category_id = c.category_id
+        where l.user_id = #{userId}
+            and d.deleted_at is null
+            and upper(coalesce(l.download_status, 'SUCCESS')) = 'SUCCESS'
+        <if test="keyword != null and keyword != ''">
+            and (
+                lower(d.title) like concat('%', lower(#{keyword}), '%')
+                or lower(coalesce(d.provider, '')) like concat('%', lower(#{keyword}), '%')
+                or lower(coalesce(c.category_name_ko, '')) like concat('%', lower(#{keyword}), '%')
+                or lower(coalesce(l.download_format, '')) like concat('%', lower(#{keyword}), '%')
+            )
+        </if>
+        <if test="periodStart != null">
+            and l.created_at &gt;= #{periodStart}
+        </if>
+        <if test="fileFormat != null and fileFormat != ''">
+            and upper(replace(coalesce(l.download_format, f.file_extension, ''), '.', '')) = upper(replace(#{fileFormat}, '.', ''))
+        </if>
+    </sql>
+
+    <select id="findMyDownloadHistory" resultType="map">
+        select
+            l.download_id as "downloadId",
+            d.dataset_id as "datasetId",
+            d.title as "title",
+            d.provider as "provider",
+            c.category_name_ko as "categoryNameKo",
+            coalesce(l.download_format, upper(replace(f.file_extension, '.', ''))) as "downloadFormat",
+            f.file_size as "fileSize",
+            l.created_at as "downloadedAt"
+        <include refid="myDownloadHistoryFromWhere"/>
+        <choose>
+            <when test="sort == 'title'">
+                order by d.title asc, l.created_at desc
+            </when>
+            <otherwise>
+                order by l.created_at desc, l.download_id desc
+            </otherwise>
+        </choose>
+        limit #{limit}
+        offset #{offset}
+    </select>
+
+    <select id="countMyDownloadHistory" resultType="java.lang.Integer">
+        select count(*)
+        <include refid="myDownloadHistoryFromWhere"/>
+    </select>
+
+    <sql id="myFavoriteDatasetFromWhere">
+        from sd_dataset_favorite fav
+        inner join sd_gis_dataset d on fav.dataset_id = d.dataset_id
+        left join sd_gis_dataset_file f on d.dataset_id = f.dataset_id and f.file_role = 'ORIGINAL'
+        left join sd_dataset_stat s on d.dataset_id = s.dataset_id
+        left join sd_data_category c on d.category_id = c.category_id
+        where fav.user_id = #{userId}
+            and d.deleted_at is null
+        <if test="keyword != null and keyword != ''">
+            and (
+                lower(d.title) like concat('%', lower(#{keyword}), '%')
+                or lower(coalesce(d.provider, '')) like concat('%', lower(#{keyword}), '%')
+                or lower(coalesce(c.category_name_ko, '')) like concat('%', lower(#{keyword}), '%')
+                or lower(replace(coalesce(f.file_extension, ''), '.', '')) like concat('%', lower(#{keyword}), '%')
+            )
+        </if>
+        <if test="periodStart != null">
+            and fav.created_at &gt;= #{periodStart}
+        </if>
+        <if test="fileFormat != null and fileFormat != ''">
+            and upper(replace(coalesce(f.file_extension, ''), '.', '')) = upper(replace(#{fileFormat}, '.', ''))
+        </if>
+    </sql>
+
+    <select id="findMyFavoriteDatasets"
+            resultType="com.hub.gisdatahub.download.dto.DownloadDatasetListItemDto">
+        select
+            d.dataset_id,
+            d.title,
+            d.description,
+            d.provider,
+            d.category_id,
+            c.category_name_ko,
+            d.is_public,
+            fav.created_at,
+            f.file_extension,
+            coalesce(s.view_count, 0) as view_count,
+            coalesce(s.download_count, 0) as download_count,
+            true as favorite
+        <include refid="myFavoriteDatasetFromWhere"/>
+        <choose>
+            <when test="sort == 'title'">
+                order by d.title asc, fav.created_at desc
+            </when>
+            <otherwise>
+                order by fav.created_at desc
+            </otherwise>
+        </choose>
+        limit #{limit}
+        offset #{offset}
+    </select>
+
+    <select id="countMyFavoriteDatasets" resultType="java.lang.Integer">
+        select count(*)
+        <include refid="myFavoriteDatasetFromWhere"/>
+    </select>
+
+    <select id="findMyRecentViewedDatasets"
+            resultType="com.hub.gisdatahub.download.dto.DownloadDatasetListItemDto">
+        select
+            d.dataset_id,
+            d.title,
+            d.description,
+            d.provider,
+            d.category_id,
+            c.category_name_ko,
+            d.is_public,
+            max(v.created_at) as created_at,
+            f.file_extension,
+            coalesce(s.view_count, 0) as view_count,
+            coalesce(s.download_count, 0) as download_count
+        from sd_dataset_view_log v
+        inner join sd_gis_dataset d on v.dataset_id = d.dataset_id
+        left join sd_gis_dataset_file f on d.dataset_id = f.dataset_id and f.file_role = 'ORIGINAL'
+        left join sd_dataset_stat s on d.dataset_id = s.dataset_id
+        left join sd_data_category c on d.category_id = c.category_id
+        where v.user_id = #{userId}
+            and d.deleted_at is null
+        group by
+            d.dataset_id,
+            d.title,
+            d.description,
+            d.provider,
+            d.category_id,
+            c.category_name_ko,
+            d.is_public,
+            f.file_extension,
+            s.view_count,
+            s.download_count
+        order by max(v.created_at) desc
+        limit #{limit}
+    </select>
+
+    <select id="findMyDownloadFormatStats" resultType="map">
+        select
+            upper(replace(coalesce(l.download_format, f.file_extension, 'UNKNOWN'), '.', '')) as "format",
+            count(*) as "count"
+        from sd_download_log l
+        left join sd_gis_dataset_file f on l.file_id = f.file_id
+        where l.user_id = #{userId}
+            and upper(coalesce(l.download_status, 'SUCCESS')) = 'SUCCESS'
+            and l.created_at &gt;= #{periodStart}
+        group by upper(replace(coalesce(l.download_format, f.file_extension, 'UNKNOWN'), '.', ''))
+        order by count(*) desc
+    </select>
+
+    <select id="countMyDownloads" resultType="java.lang.Integer">
+        select count(*)
+        from sd_download_log
+        where user_id = #{userId}
+            and upper(coalesce(download_status, 'SUCCESS')) = 'SUCCESS'
+        <if test="periodStart != null">
+            and created_at &gt;= #{periodStart}
+        </if>
+    </select>
+
+    <select id="findMyLatestDownload" resultType="map">
+        select
+            d.dataset_id as "datasetId",
+            d.title as "title",
+            l.created_at as "downloadedAt"
+        from sd_download_log l
+        inner join sd_gis_dataset d on l.dataset_id = d.dataset_id
+        where l.user_id = #{userId}
+            and upper(coalesce(l.download_status, 'SUCCESS')) = 'SUCCESS'
+            and d.deleted_at is null
+        order by l.created_at desc, l.download_id desc
+        limit 1
+    </select>
+
+    <select id="findMyMostUsedFormat" resultType="java.lang.String">
+        select upper(replace(coalesce(l.download_format, f.file_extension, 'UNKNOWN'), '.', '')) as download_format
+        from sd_download_log l
+        left join sd_gis_dataset_file f on l.file_id = f.file_id
+        where l.user_id = #{userId}
+            and upper(coalesce(l.download_status, 'SUCCESS')) = 'SUCCESS'
+            and l.created_at &gt;= #{periodStart}
+        group by upper(replace(coalesce(l.download_format, f.file_extension, 'UNKNOWN'), '.', ''))
+        order by count(*) desc, download_format asc
+        limit 1
+    </select>
+</mapper>

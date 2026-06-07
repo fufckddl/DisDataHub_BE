@@ -92,15 +92,19 @@
             f.file_extension,
             coalesce(s.view_count, 0) as view_count,
             coalesce(s.download_count, 0) as download_count,
-            case
-                when #{userId} is null then false
-                else exists (
+            <choose>
+                <when test="userId != null">
+                    exists (
                     select 1
                     from sd_dataset_favorite fav
                     where fav.dataset_id = d.dataset_id
                         and fav.user_id = #{userId}
-                )
-            end as favorite
+                    ) as favorite
+                </when>
+                <otherwise>
+                    false as favorite
+                </otherwise>
+            </choose>
         <include refid="approvedDatasetSearchFromWhere"/>
         <include refid="approvedDatasetSortOrder"/>
         limit #{limit}
