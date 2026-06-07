@@ -31,7 +31,6 @@ import org.apache.poi.ss.usermodel.*;
 @Service
 public class DataParsingService {
 
-    // 🚀 [수정] C드라이브 경로(tempRootPath) 퇴출! 대신 S3 요원을 고용합니다.
     @Autowired
     private S3FileService s3FileService;
 
@@ -46,28 +45,34 @@ public class DataParsingService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // 🚀 [신규 도우미 메서드] 1000줄 초과 시 DB와 S3를 깨끗하게 청소하고 에러를 뱉는 폭파 스위치
+    private void abortProcessForLimitExceeded(DatasetUploadDto dto, String errorMessage) {
+        System.err.println("🚨 [백엔드 제한 초과 차단] " + errorMessage);
+
+        // 1. 관제탑 에러 로그 1건 추가
+        validationMapper.updateLogValidationFailed(dto.getUploadId(), 1);
+        // 2. 파일 메타데이터(sd_gis_dataset_file) 경로 비우기
+        validationMapper.clearDatasetFilePath(dto.getDatasetId());
+        // 3. 부모 테이블(sd_gis_dataset) 상태 INVALID 변경
+        validationMapper.updateDatasetStatusToInvalid(dto.getDatasetId());
+
+        // 4. 클라우드에 올라간 파일 즉각 폐기
+        fileUploadService.deleteTempFile(dto.getStoredFilename());
+        System.out.println("🗑️ [클라우드 롤백] 제한 초과 파일 S3에서 삭제 완료.");
+
+        // 5. 프론트엔드에 빨간색 에러창을 띄우도록 예외 투척! (DatasetService가 이 예외는 Rollback 안 하도록 설정되어 있음)
+        throw new ValidationFailedException(errorMessage, dto.getUploadId());
+    }
+
     public int parseAndBulkInsert(DatasetUploadDto dto) throws Exception {
         System.out.println("[파싱 전담반] 파일 확장자 판별 및 데이터 추출을 시작합니다.");
 
         long maxSizeBytes = 2L * 1024 * 1024 * 1024;
 
         if (dto.getFileSize() > maxSizeBytes) {
-            String errorMessage = "파일 용량 제한(2GB)을 초과했습니다. (현재 크기: " + (dto.getFileSize() / 1024 / 1024) + "MB)";
-            System.err.println("🚨 [백엔드 용량 초과 차단] " + errorMessage);
-
-            validationMapper.updateLogValidationFailed(dto.getUploadId(), 1);
-            validationMapper.clearDatasetFilePath(dto.getDatasetId());
-            validationMapper.updateDatasetStatusToInvalid(dto.getDatasetId());
-
-            // 🚀 FileUploadService가 이미 S3로 연결되어 있으므로, 클라우드의 2GB 넘는 파일이 여기서 안전하게 지워집니다!
-            fileUploadService.deleteTempFile(dto.getStoredFilename());
-            System.out.println("🗑️ [클라우드 롤백] 2GB 초과 S3 파일 삭제 완료.");
-
-            throw new ValidationFailedException(errorMessage, dto.getUploadId());
+            abortProcessForLimitExceeded(dto, "파일 용량 제한(2GB)을 초과했습니다. (현재 크기: " + (dto.getFileSize() / 1024 / 1024) + "MB)");
         }
 
-        // 🚀 [수정] File 객체를 만들어서 넘기던 로직 삭제!
-        // 대신 파서들이 각자 S3에서 빨대(Stream)를 꽂도록 dto만 넘겨줍니다.
         String extension = dto.getFileExtension();
 
         switch (extension) {
@@ -106,8 +111,6 @@ public class DataParsingService {
         String encoding = dto.getEncoding() != null ? dto.getEncoding() : "UTF-8";
         List<TempFeatureDto> featureList = new ArrayList<>();
 
-        // 🚀 [핵심 수술] FileInputStream 대신 s3FileService.downloadFileAsStream 사용!
-        // try-with-resources 안에 선언했으므로, 파싱이 끝나면 Java가 알아서 S3 연결(빨대)을 끊어줍니다. (메모리 릭 방지)
         try (
             InputStream is = s3FileService.downloadFileAsStream("tempFiles", dto.getStoredFilename());
             InputStreamReader isr = new InputStreamReader(is, encoding);
@@ -126,9 +129,14 @@ public class DataParsingService {
             }
 
             String[] line;
-            int rowIndex = 2;
+            int rowIndex = 2; // 헤더가 1이므로 데이터는 2부터 시작
 
             while ((line = csvReader.readNext()) != null) {
+                // 🚀 [1000줄 방어막] 데이터 행이 1000개를 초과하는 순간 바로 파싱 중단 및 롤백 폭파!
+                if (featureList.size() >= 1000) {
+                    abortProcessForLimitExceeded(dto, "CSV 데이터가 1000건을 초과했습니다. 자동 검증은 1000건 이하의 데이터만 지원합니다.");
+                }
+
                 TempFeatureDto feature = new TempFeatureDto();
 
                 feature.setUploadId(dto.getUploadId());
@@ -184,6 +192,9 @@ public class DataParsingService {
 
             return featureList.size();
 
+        } catch (ValidationFailedException ve) {
+            // 방어막에서 던진 예외는 그대로 Controller까지 토스
+            throw ve;
         } catch (Exception e) {
             e.printStackTrace();
             throw new RuntimeException("CSV 파싱 중 에러 발생: " + e.getMessage());
@@ -194,7 +205,6 @@ public class DataParsingService {
         System.out.println("GeoJSON 파싱 프로세스를 시작합니다. (S3 스트리밍 모드)");
         List<TempFeatureDto> featureList = new ArrayList<>();
 
-        // 🚀 [수술] File 객체 대신 S3 스트림 투입
         try (InputStream is = s3FileService.downloadFileAsStream("tempFiles", dto.getStoredFilename())) {
             
             JsonNode rootNode = objectMapper.readTree(is);
@@ -202,6 +212,11 @@ public class DataParsingService {
 
             if (features.isMissingNode() || !features.isArray()) {
                 throw new IllegalArgumentException("올바른 GeoJSON 규격이 아닙니다. 'features' 배열을 찾을 수 없습니다.");
+            }
+
+            // 🚀 [1000줄 방어막] GeoJSON은 배열 사이즈를 바로 알 수 있으므로 시작 전에 컷!
+            if (features.size() > 1000) {
+                abortProcessForLimitExceeded(dto, "GeoJSON 데이터가 1000건을 초과했습니다. (현재 " + features.size() + "건) 자동 검증은 1000건 이하만 지원합니다.");
             }
 
             int rowIndex = 1; 
@@ -261,6 +276,8 @@ public class DataParsingService {
 
             return featureList.size();
 
+        } catch (ValidationFailedException ve) {
+            throw ve;
         } catch (Exception e) {
             e.printStackTrace();
             throw new RuntimeException("GeoJSON 파싱 중 에러 발생: " + e.getMessage());
@@ -309,7 +326,6 @@ public class DataParsingService {
         List<TempFeatureDto> featureList = new ArrayList<>();
         DataFormatter formatter = new DataFormatter();
 
-        // 🚀 [수술] FileInputStream 대신 S3 스트림 사용!
         try (
             InputStream is = s3FileService.downloadFileAsStream("tempFiles", dto.getStoredFilename());
             Workbook workbook = WorkbookFactory.create(is)
@@ -322,6 +338,11 @@ public class DataParsingService {
             Sheet sheet = workbook.getSheet(targetSheetName);
             if (sheet == null) {
                 throw new IllegalArgumentException("엑셀 파일에 '" + targetSheetName + "' 시트가 존재하지 않습니다. 시트 이름을 다시 확인해 주세요.");
+            }
+
+            // 🚀 [1000줄 방어막] 엑셀도 마지막 줄 번호를 바로 알 수 있으므로 쿨하게 컷!
+            if (sheet.getLastRowNum() > 1000) {
+                abortProcessForLimitExceeded(dto, "Excel 데이터가 1000건을 초과했습니다. (현재 " + sheet.getLastRowNum() + "건) 자동 검증은 1000건 이하만 지원합니다.");
             }
 
             Row headerRow = sheet.getRow(0); 
@@ -399,6 +420,8 @@ public class DataParsingService {
 
             return featureList.size();
 
+        } catch (ValidationFailedException ve) {
+            throw ve;
         } catch (Exception e) {
             e.printStackTrace();
             throw new RuntimeException("Excel 파싱 중 치명적 에러 발생: " + e.getMessage());
@@ -410,7 +433,6 @@ public class DataParsingService {
         Set<String> foundExtensions = new HashSet<>();
         String encoding = dto.getEncoding() != null ? dto.getEncoding() : "UTF-8";
 
-        // 🚀 [수술] ZIP 압축 파일도 S3 스트림으로 실시간 스캔! (임시 다운로드 불필요)
         try (
              InputStream is = s3FileService.downloadFileAsStream("tempFiles", dto.getStoredFilename());
              ZipInputStream zis = new ZipInputStream(is, Charset.forName(encoding))
@@ -437,17 +459,8 @@ public class DataParsingService {
             validationMapper.updateDatasetStatusToRequest(dto.getDatasetId());
             return 0;
         } else {
-            String errorMessage = "Shapefile 묶음 안에 필수 파일이 누락되었습니다. 누락된 파일: " + requiredExtensions;
-            System.err.println("🚨 [SHP 검사 실패] " + errorMessage);
-
-            validationMapper.updateLogValidationFailed(dto.getUploadId(), 1);
-            validationMapper.clearDatasetFilePath(dto.getDatasetId());
-            validationMapper.updateDatasetStatusToInvalid(dto.getDatasetId());
-
-            fileUploadService.deleteTempFile(dto.getStoredFilename());
-            System.out.println("🗑️ [클라우드 롤백] 불량 ZIP 파일 삭제 완료.");
-
-            throw new ValidationFailedException(errorMessage, dto.getUploadId());
+            abortProcessForLimitExceeded(dto, "Shapefile 묶음 안에 필수 파일이 누락되었습니다. 누락된 파일: " + requiredExtensions);
+            return 0;
         }
     }
 
