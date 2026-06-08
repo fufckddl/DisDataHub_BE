@@ -138,4 +138,10 @@
         ) r
     </select>
 
+    <select id="calculatePolygonAreaSquareMeters"
+            parameterType="java.lang.String"
+            resultType="java.lang.Double">
+        select ST_Area(ST_GeomFromText(#{polygonWkt}, 4326)::geography)::double precision
+    </select>
+
 </mapper>
