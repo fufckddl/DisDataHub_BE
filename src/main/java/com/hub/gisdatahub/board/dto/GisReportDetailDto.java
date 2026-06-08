@@ -25,4 +25,5 @@ public class GisReportDetailDto {
     private String eupmyeondong;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    private String deletedYn;
 }

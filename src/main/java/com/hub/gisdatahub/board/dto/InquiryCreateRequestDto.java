@@ -4,6 +4,7 @@ import lombok.Data;
 
 @Data
 public class InquiryCreateRequestDto {
+    private Long postId;
     private Integer userId;
     private String title;
     private String content;

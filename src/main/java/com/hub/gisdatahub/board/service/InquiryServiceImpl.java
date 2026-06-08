@@ -14,14 +14,14 @@ import com.hub.gisdatahub.board.dto.InquiryDetailDto;
 import com.hub.gisdatahub.board.mapper.InquirySqlMapper;
 
 @Service
-public class InquiryServiceImpl implements InquiryService{
-    
+public class InquiryServiceImpl implements InquiryService {
+
     @Autowired
     public InquirySqlMapper inquirySqlMapper;
-    
+
     @Override
-    public List<InquiryDetailDto> getInquiryList() {
-        return inquirySqlMapper.findInquiryList();
+    public List<InquiryDetailDto> getInquiryList(Integer loginUserId) {
+        return inquirySqlMapper.findInquiryList(loginUserId);
     }
 
     @Transactional
@@ -33,7 +33,7 @@ public class InquiryServiceImpl implements InquiryService{
         boardPostDto.setTitle(requestDto.getTitle());
         boardPostDto.setContent(requestDto.getContent());
         boardPostDto.setVisibilityStatus(requestDto.getVisibilityStatus());
-        
+
         if (boardPostDto.getVisibilityStatus() == null) {
             boardPostDto.setVisibilityStatus("PUBLIC");
         }
@@ -52,10 +52,15 @@ public class InquiryServiceImpl implements InquiryService{
     }
 
     @Override
-    public InquiryDetailDto getInquiryDetail(Long postId) {
-        inquirySqlMapper.increaseInquiryViewCount(postId);
+    public InquiryDetailDto getInquiryDetail(Long postId, Integer loginUserId) {
+        InquiryDetailDto inquiryDetail =
+                inquirySqlMapper.findInquiryDetail(postId, loginUserId);
 
-        return inquirySqlMapper.findInquiryDetail(postId);
+        if (inquiryDetail != null) {
+            inquirySqlMapper.increaseInquiryViewCount(postId, loginUserId);
+        }
+
+        return inquiryDetail;
     }
 
     @Override
@@ -97,7 +102,9 @@ public class InquiryServiceImpl implements InquiryService{
             boardReplyDto.setPostId(postId);
             boardReplyDto.setUserId(requestDto.getAdminUserId());
             boardReplyDto.setReplyWriterName(
-                requestDto.getReplyWriterName() == null ? "관리자" : requestDto.getReplyWriterName()
+                    requestDto.getReplyWriterName() == null
+                            ? "관리자"
+                            : requestDto.getReplyWriterName()
             );
             boardReplyDto.setContent(answerContent);
 
@@ -108,6 +115,43 @@ public class InquiryServiceImpl implements InquiryService{
 
         if (updateCount == 0) {
             throw new RuntimeException("상태를 변경할 문의 게시글을 찾을 수 없습니다.");
+        }
+    }
+
+    @Transactional
+    @Override
+    public void updateMyInquiry(
+            Long postId,
+            Integer loginUserId,
+            InquiryCreateRequestDto requestDto
+    ) {
+        requestDto.setPostId(postId);
+        requestDto.setUserId(loginUserId);
+
+        if (requestDto.getVisibilityStatus() == null) {
+            requestDto.setVisibilityStatus("PUBLIC");
+        }
+
+        int postUpdateCount = inquirySqlMapper.updateMyInquiryPost(requestDto);
+
+        if (postUpdateCount == 0) {
+            throw new RuntimeException("수정 권한이 없거나 문의글을 찾을 수 없습니다.");
+        }
+
+        int detailUpdateCount = inquirySqlMapper.updateMyInquiryDetail(requestDto);
+
+        if (detailUpdateCount == 0) {
+            throw new RuntimeException("수정할 문의 상세 정보를 찾을 수 없습니다.");
+        }
+    }
+
+    @Transactional
+    @Override
+    public void deleteMyInquiry(Long postId, Integer loginUserId) {
+        int deleteCount = inquirySqlMapper.deleteMyInquiryPost(postId, loginUserId);
+
+        if (deleteCount == 0) {
+            throw new RuntimeException("삭제 권한이 없거나 문의글을 찾을 수 없습니다.");
         }
     }
 }
