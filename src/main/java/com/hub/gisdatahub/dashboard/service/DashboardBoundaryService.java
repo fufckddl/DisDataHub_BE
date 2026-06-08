@@ -207,7 +207,6 @@ public class DashboardBoundaryService {
     private static final String KMA_VILAGE_FCST_DATASET_CODE = "KMA_VILAGE_FCST_MAIN";
     private static final String KMA_TEMPERATURE_CATEGORY = "T1H";
     private static final String MOIS_AVERAGE_AGE_DATASET_CODE = "MOIS_ADMM_AVG_AGE_MAIN";
-
     private final NamedParameterJdbcTemplate jdbcTemplate;
     private final DashboardPopulationMapper populationMapper;
     private final ConcurrentMap<String, String> areaBoundaryCache = new ConcurrentHashMap<>();
@@ -641,6 +640,12 @@ public class DashboardBoundaryService {
         Bbox resolvedBbox = resolveOptionalBbox(bbox);
         String resolvedAreaCode = resolveOptionalAreaCode(areaCode);
         int resolvedLimit = normalizeFeatureLimit(limit);
+        Optional<AreaMeta> selectedAreaMeta = resolvedAreaCode == null
+                ? Optional.empty()
+                : findOptionalAreaMeta(resolvedAreaCode);
+        Set<String> scopeAreaCodes = resolvedAreaCode == null
+                ? Set.of()
+                : dashboardObservationScopeAreaCodes(resolvedAreaCode, selectedAreaMeta.orElse(null));
         String bboxFilter = resolvedBbox == null
                 ? ""
                 : """
@@ -652,17 +657,36 @@ public class DashboardBoundaryService {
         String areaFilter = resolvedAreaCode == null
                 ? ""
                 : """
-                  AND EXISTS (
-                      SELECT 1
-                      FROM public.sd_area_boundary b
-                      WHERE b.area_code = :areaCode
-                        AND ST_Covers(
-                            ST_MakeValid(b.geom),
-                            COALESCE(
-                                f.geom,
-                                ST_SetSRID(ST_MakePoint(f.longitude::double precision, f.latitude::double precision), 4326)
+                  AND (
+                      f.source_area_code = :areaCode
+                      OR f.source_area_code IN (:scopeAreaCodes)
+                      OR EXISTS (
+                          SELECT 1
+                          FROM public.sd_area_code selected_area
+                          WHERE selected_area.area_code = :selectedAreaCode
+                            AND (
+                                (
+                                    selected_area.level = 'SIDO'
+                                    AND f.source_area_code LIKE selected_area.sido_code || '%%'
+                                )
+                                OR (
+                                    selected_area.level = 'SIGUNGU'
+                                    AND f.source_area_code LIKE selected_area.sigungu_code || '%%'
+                                )
                             )
-                        )
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM public.sd_area_boundary b
+                          WHERE b.area_code = :selectedAreaCode
+                            AND ST_Covers(
+                                ST_MakeValid(b.geom),
+                                COALESCE(
+                                    f.geom,
+                                    ST_SetSRID(ST_MakePoint(f.longitude::double precision, f.latitude::double precision), 4326)
+                                )
+                            )
+                      )
                   )
                   """;
 
@@ -698,7 +722,21 @@ public class DashboardBoundaryService {
                             'businessName', f.raw_payload ->> 'busiNm',
                             'businessCall', f.raw_payload ->> 'busiCall',
                             'parkingFree', f.raw_payload ->> 'parkingFree'
-                        )
+                        ) || CASE
+                            WHEN f.dataset_code IN (
+                                'STANDARD_URBAN_PARK_MAIN',
+                                'STANDARD_LIBRARY_MAIN',
+                                'STANDARD_AED_MAIN'
+                            ) THEN jsonb_build_object(
+                            'areaSize', COALESCE(f.raw_payload ->> 'parkArea', f.raw_payload ->> 'areaSize'),
+                            'openTime', COALESCE(f.raw_payload ->> 'weekdayOperOpenHhmm', f.raw_payload ->> 'openTime'),
+                            'closeTime', COALESCE(f.raw_payload ->> 'weekdayOperColseHhmm', f.raw_payload ->> 'closeTime'),
+                            'phoneNumber', COALESCE(f.raw_payload ->> 'phoneNumber', f.raw_payload ->> 'phone'),
+                            'facilityType', COALESCE(f.raw_payload ->> 'libraryType', f.raw_payload ->> 'institutionType'),
+                            'managerName', COALESCE(f.raw_payload ->> 'institutionNm', f.raw_payload ->> 'managerNm')
+                            )
+                            ELSE '{}'::jsonb
+                        END
                     ) AS feature
                     FROM public.sd_dashboard_geo_feature f
                     WHERE f.dataset_code = :datasetCode
@@ -721,6 +759,12 @@ public class DashboardBoundaryService {
                 .addValue("limit", resolvedLimit);
         if (resolvedAreaCode != null) {
             params.addValue("areaCode", resolvedAreaCode);
+            params.addValue("selectedAreaCode", selectedAreaMeta
+                    .map(AreaMeta::areaCode)
+                    .orElse(resolvedAreaCode));
+            params.addValue("scopeAreaCodes", scopeAreaCodes.isEmpty()
+                    ? Set.of(resolvedAreaCode)
+                    : scopeAreaCodes);
         }
         if (resolvedBbox != null) {
             params.addValue("minLon", resolvedBbox.minLon());
@@ -1145,6 +1189,9 @@ public class DashboardBoundaryService {
         try {
             AreaMeta areaMeta = knownAreaMeta != null ? knownAreaMeta : findAreaMeta(resolveAreaCode(areaCode));
             addIfPresent(scopeAreaCodes, areaMeta.areaCode());
+            addIfPresent(scopeAreaCodes, areaMeta.sidoCode());
+            addIfPresent(scopeAreaCodes, areaMeta.sigunguCode());
+            addIfPresent(scopeAreaCodes, areaMeta.eupmyeondongCode());
             addIfPresent(scopeAreaCodes, composeAreaCode(areaMeta.sidoCode(), "00000000"));
             addIfPresent(scopeAreaCodes, composeAreaCode(areaMeta.sigunguCode(), "00000"));
             addIfPresent(scopeAreaCodes, composeAreaCode(areaMeta.eupmyeondongCode(), "00"));

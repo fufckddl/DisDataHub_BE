@@ -51,6 +51,7 @@ public class DashboardGisOpenApiCollectService {
     private static final int DEFAULT_PAGE_NO = 1;
     private static final int DEFAULT_NUM_OF_ROWS = 5;
     private static final int MAX_NUM_OF_ROWS = 100;
+    private static final int MAX_PAGE_GUARD = 1000;
     private static final String SEOUL_SIDO_AREA_CODE = "1100000000";
     private static final String SEOUL_SIDO_CODE = "11";
     private static final String EV_CHARGER_COUNT_METRIC_CODE = "EV_CHARGER_COUNT";
@@ -282,6 +283,9 @@ public class DashboardGisOpenApiCollectService {
             finishRun(runId, "SKIPPED", 0, 0, 1, spec.blockerReason());
             return result(spec, "SKIPPED", 0, 0, spec.blockerReason());
         }
+        if (shouldCollectAllFeaturePages(spec)) {
+            return collectAllFeaturePages(spec, pageNo, statsYm, keyword);
+        }
 
         Map<String, Object> queryParams = requestParams(spec, pageNo, numOfRows, statsYm, keyword);
         String missingKey = ensureAuthParams(spec, queryParams);
@@ -304,6 +308,64 @@ public class DashboardGisOpenApiCollectService {
             finishRun(runId, "FAILED", 0, 0, 1, message);
             return result(spec, "FAILED", 0, 0, message);
         }
+    }
+
+    private Map<String, Object> collectAllFeaturePages(SourceSpec spec, int startPageNo, String statsYm, String keyword) {
+        int pageNo = Math.max(startPageNo, DEFAULT_PAGE_NO);
+        int numOfRows = MAX_NUM_OF_ROWS;
+        Map<String, Object> initialParams = requestParams(spec, pageNo, numOfRows, statsYm, keyword);
+        initialParams.put("collectionMode", "ALL_PAGES");
+        String missingKey = ensureAuthParams(spec, initialParams);
+        if (missingKey != null) {
+            long runId = startRun(spec, initialParams);
+            String blocker = "missing API key: " + missingKey;
+            finishRun(runId, "SKIPPED", 0, 0, 1, blocker);
+            return result(spec, "SKIPPED", 0, 0, blocker);
+        }
+
+        long runId = startRun(spec, initialParams);
+        int fetched = 0;
+        int saved = 0;
+        int failed = 0;
+        String lastError = null;
+        boolean hasNextPage = true;
+        int lastPageNo = pageNo - 1;
+
+        while (hasNextPage && pageNo < startPageNo + MAX_PAGE_GUARD) {
+            Map<String, Object> queryParams = requestParams(spec, pageNo, numOfRows, statsYm, keyword);
+            try {
+                String body = dataCollectClient.callOpenApi(spec.baseUrl(), spec.path(), queryParams);
+                SaveResult saveResult = saveResponse(runId, spec, body);
+                fetched += saveResult.fetchedCount();
+                saved += saveResult.savedCount();
+                lastPageNo = pageNo;
+                hasNextPage = hasNextPage(body, pageNo, numOfRows, saveResult);
+                pageNo++;
+            } catch (Exception exception) {
+                failed++;
+                lastError = exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
+                hasNextPage = false;
+            }
+        }
+
+        if (hasNextPage) {
+            failed++;
+            lastError = "page guard exceeded: " + MAX_PAGE_GUARD;
+        }
+
+        String runStatus = saved > 0 ? (failed > 0 ? "PARTIAL" : "SUCCEEDED") : failed > 0 ? "FAILED" : "SKIPPED";
+        String status = saved > 0 ? (failed > 0 ? "PARTIAL" : "COMPLETED") : failed > 0 ? "FAILED" : "NO_DATA";
+        finishRun(runId, runStatus, fetched, saved, failed, lastError);
+        return result(spec, status, fetched, saved,
+                lastError == null
+                        ? "all feature pages collected: " + startPageNo + "-" + lastPageNo
+                        : lastError);
+    }
+
+    private boolean shouldCollectAllFeaturePages(SourceSpec spec) {
+        return spec.storageType() == StorageType.FEATURE
+                && spec != SourceSpec.KECO_EV_CHARGER_MAIN
+                && spec != SourceSpec.JUSO_SEARCH_API_MAIN;
     }
 
     private Map<String, Object> syncExistingResidentPopulation(SourceSpec spec, String statsYm) {
@@ -922,6 +984,9 @@ public class DashboardGisOpenApiCollectService {
                 """;
         BigDecimal longitude = firstDecimal(row, "longitude", "lon", "lng", "mapx", "mapX", "경도", "lo", "x", "LONGITUDE", "LON", "LNG");
         BigDecimal latitude = firstDecimal(row, "latitude", "lat", "mapy", "mapY", "위도", "la", "y", "LATITUDE", "LAT");
+        if (longitude == null || latitude == null) {
+            return 0;
+        }
         String externalId = featureExternalId(row, spec);
         if (externalId.isBlank()) {
             externalId = spec.datasetCode() + ':' + hash(row.toString());
@@ -931,16 +996,16 @@ public class DashboardGisOpenApiCollectService {
                 .addValue("metricCode", metricCode(spec.datasetCode()))
                 .addValue("runId", runId)
                 .addValue("externalId", externalId)
-                .addValue("featureName", blankToNull(firstText(row, "name", "title", "featureName", "bizesNm", "statNm", "csNm", "fcltyNm", "시설명", "상호명", "관광지명", "schoolNm", "LBRRY_NM", "prkplceNm")))
-                .addValue("featureCategory", blankToNull(firstText(row, "category", "contenttypeid", "indsSclsNm", "chgerType", "busiNm", "fcltyType", "type", "구분")))
+                .addValue("featureName", blankToNull(firstText(row, "name", "title", "featureName", "bizesNm", "statNm", "csNm", "fcltyNm", "시설명", "상호명", "관광지명", "schoolNm", "LBRRY_NM", "lbrryNm", "prkplceNm", "nodenm")))
+                .addValue("featureCategory", blankToNull(firstText(row, "category", "contenttypeid", "indsSclsNm", "chgerType", "busiNm", "fcltyType", "type", "구분", "lbrrySe")))
                 .addValue("sourceAreaCode", blankToNull(firstText(row, "areaCode", "areacode", "sigungucode", "ctprvnCd", "signguCd", "adongCd", "bjd_cd", "zscode", "zcode")))
-                .addValue("sourceAreaName", blankToNull(firstText(row, "areaName", "addr1", "ctprvnNm", "signguNm", "sido_sgg_nm", "institutionNm", "instt_nm", "zcodeNm", "zscodeNm")))
+                .addValue("sourceAreaName", blankToNull(firstText(row, "areaName", "addr1", "ctprvnNm", "signguNm", "sido_sgg_nm", "institutionNm", "instt_nm", "insttNm", "zcodeNm", "zscodeNm")))
                 .addValue("address", blankToNull(firstText(row, "addr", "addr1", "address", "lnmadr", "lnoAdr", "LCTN_LOTNO_ADDR", "소재지주소")))
                 .addValue("roadAddress", blankToNull(firstText(row, "roadAddress", "rdnmadr", "rdnmAdr", "LCTN_ROAD_NM_ADDR", "도로명주소")))
                 .addValue("longitude", longitude)
                 .addValue("latitude", latitude)
                 .addValue("sourceCrs", "EPSG:4326")
-                .addValue("numericValue", firstDecimal(row, "value", "count", "cnt", "CAPA", "ar", "parkingchrgeInfo"))
+                .addValue("numericValue", firstDecimal(row, "value", "count", "cnt", "CAPA", "ar", "parkingchrgeInfo", "seatCo", "bookCo"))
                 .addValue("textValue", null)
                 .addValue("jsonValue", row.toString())
                 .addValue("unit", null)
@@ -2318,7 +2383,7 @@ public class DashboardGisOpenApiCollectService {
         private static final SourceSpec MOLIT_TRAFFIC_FORECAST_MAIN = blocked("MOLIT_TRAFFIC_FORECAST", "MOLIT_TRAFFIC_FORECAST_MAIN", StorageType.OBSERVATION, null, "MOLIT_TRAFFIC_FORECAST_API_URL/API_KEY 및 도로 링크 파라미터가 필요합니다.");
         private static final SourceSpec SAFE_DISASTER_ALERT_MAIN = dataGo("SAFE_DISASTER_ALERT", "SAFE_DISASTER_ALERT_MAIN", StorageType.OBSERVATION, "SIGUNGU", "/1741000/DisasterMsg3/getDisasterMsg1List", p("type", "json"));
         private static final SourceSpec STANDARD_AED_MAIN = standard("STANDARD_AED", "STANDARD_AED_MAIN", StorageType.FEATURE, null, "/openapi/tn_pubr_public_automated_external_defibrillator_api", p("type", "json"));
-        private static final SourceSpec STANDARD_BUS_STOP_MAIN = standard("STANDARD_BUS_STOP", "STANDARD_BUS_STOP_MAIN", StorageType.FEATURE, null, "/openapi/tn_pubr_public_bus_sttn_api", p("type", "json"));
+        private static final SourceSpec STANDARD_BUS_STOP_MAIN = dataGo("STANDARD_BUS_STOP", "STANDARD_BUS_STOP_MAIN", StorageType.FEATURE, null, "/1613000/BusSttnInfoInqireService/getCrdntPrxmtSttnList", p("_type", "json", "gpsLati", "37.5665", "gpsLong", "126.9780"));
         private static final SourceSpec STANDARD_CHILD_PROTECTION_ZONE_MAIN = standard("STANDARD_CHILD_PROTECTION_ZONE", "STANDARD_CHILD_PROTECTION_ZONE_MAIN", StorageType.FEATURE, null, "/openapi/tn_pubr_public_child_prtc_area_api", p("type", "json"));
         private static final SourceSpec STANDARD_LIBRARY_MAIN = standard("STANDARD_LIBRARY", "STANDARD_LIBRARY_MAIN", StorageType.FEATURE, null, "/openapi/tn_pubr_public_lbrry_api", p("type", "json"));
         private static final SourceSpec STANDARD_PARKING_LOT_MAIN = standard("STANDARD_PARKING_LOT", "STANDARD_PARKING_LOT_MAIN", StorageType.FEATURE, null, "/openapi/tn_pubr_public_prkplce_info_api", p("type", "json"));
