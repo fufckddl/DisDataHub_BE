@@ -1,20 +1,25 @@
 package com.hub.gisdatahub.download.controller;
 
+import java.time.LocalDate;
 import java.util.List;
 
 import org.springframework.core.io.ByteArrayResource;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.hub.gisdatahub.download.dto.DatasetDownloadPageDto;
+import com.hub.gisdatahub.download.dto.DatasetFavoriteResponseDto;
 import com.hub.gisdatahub.download.dto.DownloadDatasetListItemDto;
+import com.hub.gisdatahub.download.dto.DownloadDatasetSearchResponseDto;
 import com.hub.gisdatahub.download.dto.DownloadExportResultDto;
 import com.hub.gisdatahub.download.service.DatasetDownloadService;
 
@@ -35,6 +40,34 @@ public class DatasetDownloadController {
         return datasetDownloadService.getApprovedDownloadDatasetList();
     }
 
+    @GetMapping("/datasets/search")
+    public DownloadDatasetSearchResponseDto getDownloadDatasetMainPage(
+            @RequestParam(name = "keyword", required = false) String keyword,
+            @RequestParam(name = "provider", required = false) String provider,
+            @RequestParam(name = "fileFormat", required = false) String fileFormat,
+            @RequestParam(name = "categoryId", required = false) Integer categoryId,
+            @RequestParam(name = "startDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(name = "endDate", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(name = "page", defaultValue = "1") Integer page,
+            @RequestParam(name = "size", defaultValue = "10") Integer size,
+            @RequestParam(name = "sort", defaultValue = "default") String sort,
+            Authentication authentication
+    ) {
+        Integer userId = resolveAuthenticatedUserId(authentication);
+        return datasetDownloadService.getDownloadDatasetMainPage(
+                keyword,
+                provider,
+                fileFormat,
+                categoryId,
+                startDate,
+                endDate,
+                page,
+                size,
+                sort,
+                userId
+        );
+    }
+
     @GetMapping("/datasets/{datasetId}")
     public DatasetDownloadPageDto getDatasetDownloadPage(
             @PathVariable("datasetId") Long datasetId, 
@@ -44,6 +77,15 @@ public class DatasetDownloadController {
         Integer userId = resolveAuthenticatedUserId(authentication);
         String viewIp = extractClientIp(request);
         return datasetDownloadService.getDatasetDownloadPage(datasetId, userId, viewIp);
+    }
+
+    @PostMapping("/datasets/{datasetId}/favorite")
+    public DatasetFavoriteResponseDto toggleDatasetFavorite(
+            @PathVariable("datasetId") Long datasetId,
+            Authentication authentication
+    ) {
+        Integer userId = resolveAuthenticatedUserId(authentication);
+        return datasetDownloadService.toggleDatasetFavorite(datasetId, userId);
     }
 
     private Integer resolveAuthenticatedUserId(Authentication authentication) {

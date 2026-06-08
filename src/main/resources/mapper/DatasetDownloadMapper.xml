@@ -25,6 +25,220 @@
     </select>
 
 <!-- 상세 정보 -->
+    <sql id="approvedDatasetSearchFromWhere">
+        from sd_gis_dataset d
+        left join sd_gis_dataset_file f on d.dataset_id = f.dataset_id and f.file_role = 'ORIGINAL'
+        left join sd_dataset_stat s on d.dataset_id = s.dataset_id
+        left join sd_data_category c on d.category_id = c.category_id
+        where d.deleted_at is null
+            and d.status = 'APPROVED'
+            and d.approved_at is not null
+        <if test="keyword != null and keyword != ''">
+            and (
+                lower(d.title) like concat('%', lower(#{keyword}), '%')
+                or lower(coalesce(d.description, '')) like concat('%', lower(#{keyword}), '%')
+                or lower(coalesce(d.provider, '')) like concat('%', lower(#{keyword}), '%')
+                or lower(coalesce(c.category_name_ko, '')) like concat('%', lower(#{keyword}), '%')
+            )
+        </if>
+        <if test="provider != null and provider != ''">
+            and d.provider = #{provider}
+        </if>
+        <if test="fileFormat != null and fileFormat != ''">
+            and lower(replace(coalesce(f.file_extension, ''), '.', '')) = lower(replace(#{fileFormat}, '.', ''))
+        </if>
+        <if test="categoryId != null">
+            and d.category_id = #{categoryId}
+        </if>
+        <if test="startDate != null">
+            and d.created_at &gt;= CAST(#{startDate} AS date)
+        </if>
+        <if test="endDate != null">
+            and d.created_at &lt; CAST(#{endDate} AS date) + interval '1 day'
+        </if>
+    </sql>
+
+    <sql id="approvedDatasetSortOrder">
+        <choose>
+            <when test="sort == 'viewCount'">
+                order by coalesce(s.view_count, 0) desc, d.approved_at desc, d.created_at desc
+            </when>
+            <when test="sort == 'downloadCount'">
+                order by coalesce(s.download_count, 0) desc, d.approved_at desc, d.created_at desc
+            </when>
+            <when test="sort == 'updatedAt'">
+                order by coalesce(d.updated_at, d.created_at) desc, d.approved_at desc, d.created_at desc
+            </when>
+            <when test="sort == 'title'">
+                order by d.title asc, d.approved_at desc, d.created_at desc
+            </when>
+            <otherwise>
+                order by d.approved_at desc, d.created_at desc
+            </otherwise>
+        </choose>
+    </sql>
+
+    <select id="findApprovedDownloadDatasetPage"
+            resultType="com.hub.gisdatahub.download.dto.DownloadDatasetListItemDto">
+        select
+            d.dataset_id,
+            d.title,
+            d.description,
+            d.provider,
+            d.category_id,
+            c.category_name_ko,
+            d.is_public,
+            d.created_at,
+            f.file_extension,
+            coalesce(s.view_count, 0) as view_count,
+            coalesce(s.download_count, 0) as download_count,
+            <choose>
+                <when test="userId != null">
+                    exists (
+                    select 1
+                    from sd_dataset_favorite fav
+                    where fav.dataset_id = d.dataset_id
+                        and fav.user_id = #{userId}
+                    ) as favorite
+                </when>
+                <otherwise>
+                    false as favorite
+                </otherwise>
+            </choose>
+        <include refid="approvedDatasetSearchFromWhere"/>
+        <include refid="approvedDatasetSortOrder"/>
+        limit #{limit}
+        offset #{offset}
+    </select>
+
+    <select id="countApprovedDownloadDatasets"
+            resultType="java.lang.Integer">
+        select count(distinct d.dataset_id)
+        <include refid="approvedDatasetSearchFromWhere"/>
+    </select>
+
+    <select id="findDownloadSearchProviders"
+            resultType="java.lang.String">
+        select distinct d.provider
+        from sd_gis_dataset d
+        where d.deleted_at is null
+            and d.status = 'APPROVED'
+            and d.approved_at is not null
+            and d.provider is not null
+            and d.provider != ''
+        order by d.provider
+    </select>
+
+    <select id="findDownloadSearchFileFormats"
+            resultType="java.lang.String">
+        select distinct upper(replace(f.file_extension, '.', '')) as file_format
+        from sd_gis_dataset d
+        inner join sd_gis_dataset_file f on d.dataset_id = f.dataset_id and f.file_role = 'ORIGINAL'
+        where d.deleted_at is null
+            and d.status = 'APPROVED'
+            and d.approved_at is not null
+            and f.file_extension is not null
+            and f.file_extension != ''
+        order by file_format
+    </select>
+
+    <select id="findDownloadSearchCategories"
+            resultType="com.hub.gisdatahub.download.dto.DownloadDatasetCategoryOptionDto">
+        select distinct
+            c.category_id,
+            c.category_name_ko
+        from sd_data_category c
+        inner join sd_gis_dataset d on c.category_id = d.category_id
+        where d.deleted_at is null
+            and d.status = 'APPROVED'
+            and d.approved_at is not null
+            and c.deleted_at is null
+        order by c.category_name_ko
+    </select>
+
+    <select id="countDownloadLogsBetween"
+            resultType="java.lang.Integer">
+        select count(*)
+        from sd_download_log
+        where created_at &gt;= #{fromTime}
+            and created_at &lt; #{toTime}
+            and upper(coalesce(download_status, 'SUCCESS')) = 'SUCCESS'
+    </select>
+
+    <select id="findPopularApprovedDataset"
+            resultType="com.hub.gisdatahub.download.dto.DownloadDatasetListItemDto">
+        select
+            d.dataset_id,
+            d.title,
+            d.description,
+            d.provider,
+            d.category_id,
+            c.category_name_ko,
+            d.is_public,
+            d.created_at,
+            f.file_extension,
+            coalesce(s.view_count, 0) as view_count,
+            coalesce(s.download_count, 0) as download_count
+        from sd_gis_dataset d
+        left join sd_gis_dataset_file f on d.dataset_id = f.dataset_id and f.file_role = 'ORIGINAL'
+        left join sd_dataset_stat s on d.dataset_id = s.dataset_id
+        left join sd_data_category c on d.category_id = c.category_id
+        where d.deleted_at is null
+            and d.status = 'APPROVED'
+            and d.approved_at is not null
+        order by coalesce(s.download_count, 0) desc, d.approved_at desc, d.created_at desc
+        limit 1
+    </select>
+
+    <select id="findDatasetAttributePreviewRows"
+            parameterType="java.lang.Long"
+            resultType="com.hub.gisdatahub.download.dto.DatasetFeatureExportDto">
+        select
+            f.feature_id,
+            f.feature_name,
+            f.spatial_type,
+            f.properties::text as properties_json,
+            ST_AsText(ST_MakeValid(f.geom_4326)) as geometry_wkt,
+            ST_AsGeoJSON(ST_MakeValid(f.geom_4326), 5) as geometry_json
+        from sd_gis_feature f
+        where f.dataset_id = #{datasetId}
+        order by f.feature_id
+        limit 5
+    </select>
+
+    <select id="findRelatedApprovedDatasets"
+            parameterType="java.lang.Long"
+            resultType="com.hub.gisdatahub.download.dto.DownloadDatasetListItemDto">
+        select
+            d.dataset_id,
+            d.title,
+            d.description,
+            d.provider,
+            d.category_id,
+            c.category_name_ko,
+            d.is_public,
+            d.created_at,
+            f.file_extension,
+            coalesce(s.view_count, 0) as view_count,
+            coalesce(s.download_count, 0) as download_count
+        from sd_gis_dataset d
+        left join sd_gis_dataset_file f on d.dataset_id = f.dataset_id and f.file_role = 'ORIGINAL'
+        left join sd_dataset_stat s on d.dataset_id = s.dataset_id
+        left join sd_data_category c on d.category_id = c.category_id
+        where d.deleted_at is null
+            and d.status = 'APPROVED'
+            and d.approved_at is not null
+            and d.dataset_id != #{datasetId}
+            and d.category_id = (
+                select category_id
+                from sd_gis_dataset
+                where dataset_id = #{datasetId}
+                    and deleted_at is null
+            )
+        order by coalesce(s.download_count, 0) desc, d.approved_at desc, d.created_at desc
+        limit 3
+    </select>
+
     <select id="findDatasetDetailById"
             parameterType="java.lang.Long"
             resultType="com.hub.gisdatahub.download.dto.DownloadDatasetDetailDto">
@@ -102,6 +316,25 @@
         where dataset_id = #{datasetId}
         limit 1
     </select>
+
+    <select id="countDatasetFavorite"
+            resultType="java.lang.Integer">
+        select count(*)
+        from sd_dataset_favorite
+        where dataset_id = #{datasetId}
+            and user_id = #{userId}
+    </select>
+
+    <insert id="insertDatasetFavorite">
+        insert into sd_dataset_favorite (dataset_id, user_id)
+        values (#{datasetId}, #{userId})
+    </insert>
+
+    <delete id="deleteDatasetFavorite">
+        delete from sd_dataset_favorite
+        where dataset_id = #{datasetId}
+            and user_id = #{userId}
+    </delete>
 
     <!-- 다운로드, 조회수 증가 -->
     <update id="increaseViewCount">

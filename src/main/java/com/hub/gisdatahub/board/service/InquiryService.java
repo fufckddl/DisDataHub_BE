@@ -7,17 +7,31 @@ import com.hub.gisdatahub.board.dto.InquiryCreateRequestDto;
 import com.hub.gisdatahub.board.dto.InquiryDetailDto;
 
 public interface InquiryService {
-    // 질문 게시판 목록 조회코드
-    public List<InquiryDetailDto> getInquiryList();
-    // 질문 게시판 기본정보 저장 코드
-    public void createInquiryPost(InquiryCreateRequestDto requestDto);
-    // 질문 게시판 상세페이지 불러오는 코드
-    public InquiryDetailDto getInquiryDetail(Long postId);
+    // 질문 게시판 목록 조회
+    public List<InquiryDetailDto> getInquiryList(Integer loginUserId);
 
-    // 관리자 질문게시판 목록 조회코드
+    // 질문 게시판 작성
+    public void createInquiryPost(InquiryCreateRequestDto requestDto);
+
+    // 질문 게시판 상세 조회
+    public InquiryDetailDto getInquiryDetail(Long postId, Integer loginUserId);
+
+    // 관리자 질문게시판 목록 조회
     public List<InquiryDetailDto> getAdminInquiryList();
-    // 관리자 질문게시판 상세페이지
+
+    // 관리자 질문게시판 상세 조회
     public InquiryDetailDto getAdminInquiryDetail(Long postId);
+
     // 관리자 문의 답변 저장 및 상태 변경
     public void saveAdminInquiryAnswer(Long postId, AdminInquiryAnswerRequestDto requestDto);
+
+    // 사용자 본인 문의 수정
+    public void updateMyInquiry(
+            Long postId,
+            Integer loginUserId,
+            InquiryCreateRequestDto requestDto
+    );
+
+    // 사용자 본인 문의 삭제
+    public void deleteMyInquiry(Long postId, Integer loginUserId);
 }

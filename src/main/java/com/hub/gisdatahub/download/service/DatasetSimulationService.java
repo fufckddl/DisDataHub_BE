@@ -1,17 +1,22 @@
 package com.hub.gisdatahub.download.service;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.StringJoiner;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.hub.gisdatahub.download.dto.DownloadDatasetDetailDto;
-import com.hub.gisdatahub.download.mapper.DatasetSimulationMapper;
 import com.hub.gisdatahub.download.dto.PointRadiusSimulationRequestDto;
 import com.hub.gisdatahub.download.dto.PointRadiusSimulationResponseDto;
 import com.hub.gisdatahub.download.dto.PointRadiusSimulationSummaryDto;
+import com.hub.gisdatahub.download.dto.SimulationAreaMeasureRequestDto;
+import com.hub.gisdatahub.download.dto.SimulationAreaMeasureResponseDto;
+import com.hub.gisdatahub.download.dto.SimulationMeasurePointDto;
+import com.hub.gisdatahub.download.mapper.DatasetSimulationMapper;
 
 @Service
 public class DatasetSimulationService {
@@ -55,6 +60,29 @@ public class DatasetSimulationService {
         return response;
     }
 
+    public SimulationAreaMeasureResponseDto measurePolygonArea(
+            Long datasetId,
+            SimulationAreaMeasureRequestDto requestDto,
+            Integer userId
+    ) {
+        DownloadDatasetDetailDto dataset = datasetSimulationMapper.findDatasetDetailById(datasetId);
+        if (dataset == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "데이터셋을 찾을 수 없습니다.");
+        }
+
+        validateDatasetDetailAccess(dataset, userId);
+        validateAreaMeasurementRequest(dataset, requestDto);
+
+        String polygonWkt = buildClosedPolygonWkt(requestDto.getPoints());
+        Double areaSquareMeters = datasetSimulationMapper.calculatePolygonAreaSquareMeters(polygonWkt);
+
+        if (areaSquareMeters == null) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "면적 계산 결과를 가져오지 못했습니다.");
+        }
+
+        return new SimulationAreaMeasureResponseDto(areaSquareMeters);
+    }
+
     private void validateDatasetDetailAccess(DownloadDatasetDetailDto dataset, Integer userId) {
         if (Boolean.TRUE.equals(dataset.getIsPublic())) {
             return;
@@ -95,6 +123,43 @@ public class DatasetSimulationService {
         if (!spatialType.contains("POINT")) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Point 타입 데이터셋만 1차 시뮬레이션 대상입니다.");
         }
+    }
+
+    private void validateAreaMeasurementRequest(
+            DownloadDatasetDetailDto dataset,
+            SimulationAreaMeasureRequestDto requestDto
+    ) {
+        if (!Boolean.TRUE.equals(dataset.getIsSpatial())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "공간 데이터셋에서만 면적을 계산할 수 있습니다.");
+        }
+
+        if (requestDto == null || requestDto.getPoints() == null || requestDto.getPoints().size() < 3) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "면적 계산을 위해서는 세 개 이상의 좌표가 필요합니다.");
+        }
+
+        for (SimulationMeasurePointDto point : requestDto.getPoints()) {
+            if (point == null || point.getLat() == null || point.getLng() == null) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "좌표 정보가 올바르지 않습니다.");
+            }
+        }
+    }
+
+    private String buildClosedPolygonWkt(List<SimulationMeasurePointDto> points) {
+        StringJoiner joiner = new StringJoiner(", ");
+
+        for (SimulationMeasurePointDto point : points) {
+            joiner.add(point.getLng() + " " + point.getLat());
+        }
+
+        SimulationMeasurePointDto firstPoint = points.get(0);
+        SimulationMeasurePointDto lastPoint = points.get(points.size() - 1);
+
+        if (!Objects.equals(firstPoint.getLat(), lastPoint.getLat())
+                || !Objects.equals(firstPoint.getLng(), lastPoint.getLng())) {
+            joiner.add(firstPoint.getLng() + " " + firstPoint.getLat());
+        }
+
+        return "POLYGON((" + joiner + "))";
     }
 
     private String normalize(String value) {

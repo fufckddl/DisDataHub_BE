@@ -27,6 +27,7 @@ public class InquiryDetailDto {
     private Long replyId;
     private Integer answerUserId;
     private String replyWriterName;
+    private String writerName;
     private String answerContent;
     private LocalDateTime answeredAt;
 }

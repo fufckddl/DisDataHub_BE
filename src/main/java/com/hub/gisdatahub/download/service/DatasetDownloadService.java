@@ -2,6 +2,7 @@ package com.hub.gisdatahub.download.service;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -22,12 +23,18 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hub.gisdatahub.download.dto.DatasetDownloadPageDto;
 import com.hub.gisdatahub.download.dto.DatasetFeatureExportDto;
+import com.hub.gisdatahub.download.dto.DatasetFavoriteResponseDto;
 import com.hub.gisdatahub.download.dto.DatasetStatDto;
 import com.hub.gisdatahub.download.dto.DatasetViewLogDto;
+import com.hub.gisdatahub.download.dto.DownloadAttributePreviewDto;
 import com.hub.gisdatahub.download.dto.DownloadDatasetDetailDto;
 import com.hub.gisdatahub.download.dto.DownloadDatasetFileDto;
 import com.hub.gisdatahub.download.dto.DownloadDatasetListItemDto;
+import com.hub.gisdatahub.download.dto.DownloadDatasetSearchOptionsDto;
+import com.hub.gisdatahub.download.dto.DownloadDatasetSearchResponseDto;
+import com.hub.gisdatahub.download.dto.DownloadDatasetSummaryDto;
 import com.hub.gisdatahub.download.dto.DownloadExportResultDto;
+import com.hub.gisdatahub.download.dto.DownloadFormatOptionDto;
 import com.hub.gisdatahub.download.dto.DownloadLogDto;
 import com.hub.gisdatahub.download.mapper.DatasetDownloadMapper;
 import com.hub.gisdatahub.s3.dto.S3DownloadResult;
@@ -36,6 +43,9 @@ import com.hub.gisdatahub.user.mapper.UserMapper;
 
 @Service
 public class DatasetDownloadService {
+
+    private static final List<String> DOWNLOAD_FORMATS = List.of("CSV", "GeoJSON", "SHP", "XLSX", "TIFF");
+    private static final List<String> CONVERTIBLE_FORMATS = List.of("CSV", "GEOJSON", "XLSX");
 
     private final DatasetDownloadMapper datasetDownloadMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -53,6 +63,140 @@ public class DatasetDownloadService {
     // 메인페이지 데이터셋 목록
     public List<DownloadDatasetListItemDto> getApprovedDownloadDatasetList() {
         return datasetDownloadMapper.findApprovedDownloadDatasetList();
+    }
+
+    public DownloadDatasetSearchResponseDto getDownloadDatasetMainPage(
+            String keyword,
+            String provider,
+            String fileFormat,
+            Integer categoryId,
+            LocalDate startDate,
+            LocalDate endDate,
+            Integer page,
+            Integer size,
+            String sort,
+            Integer userId
+    ) {
+        String normalizedKeyword = normalizeFilter(keyword);
+        String normalizedProvider = normalizeFilter(provider);
+        String normalizedFileFormat = normalizeFilter(fileFormat);
+        String normalizedSort = normalizeSort(sort);
+        int safeSize = clamp(size == null ? 10 : size, 1, 50);
+        int safePage = Math.max(page == null ? 1 : page, 1);
+
+        Integer totalCountValue = datasetDownloadMapper.countApprovedDownloadDatasets(
+                normalizedKeyword,
+                normalizedProvider,
+                normalizedFileFormat,
+                categoryId,
+                startDate,
+                endDate
+        );
+        int totalCount = totalCountValue == null ? 0 : totalCountValue;
+        int totalPages = totalCount == 0 ? 0 : (int) Math.ceil((double) totalCount / safeSize);
+
+        if (totalPages > 0 && safePage > totalPages) {
+            safePage = totalPages;
+        }
+
+        int offset = (safePage - 1) * safeSize;
+        List<DownloadDatasetListItemDto> datasetList = totalCount == 0
+                ? List.of()
+                : datasetDownloadMapper.findApprovedDownloadDatasetPage(
+                        normalizedKeyword,
+                        normalizedProvider,
+                        normalizedFileFormat,
+                        categoryId,
+                        startDate,
+                        endDate,
+                        safeSize,
+                        offset,
+                        normalizedSort,
+                        userId
+                );
+
+        DownloadDatasetSearchResponseDto response = new DownloadDatasetSearchResponseDto();
+        response.setDatasetList(datasetList);
+        response.setSummary(buildMainPageSummary());
+        response.setOptions(buildSearchOptions());
+        response.setPage(safePage);
+        response.setSize(safeSize);
+        response.setTotalCount(totalCount);
+        response.setTotalPages(totalPages);
+
+        return response;
+    }
+
+    private DownloadDatasetSummaryDto buildMainPageSummary() {
+        LocalDate today = LocalDate.now();
+        LocalDateTime todayStart = today.atStartOfDay();
+        LocalDateTime tomorrowStart = today.plusDays(1).atStartOfDay();
+        LocalDateTime yesterdayStart = today.minusDays(1).atStartOfDay();
+
+        Integer totalDatasetCount = datasetDownloadMapper.countApprovedDownloadDatasets(
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+        );
+        Integer todayDownloadCount = datasetDownloadMapper.countDownloadLogsBetween(todayStart, tomorrowStart);
+        Integer yesterdayDownloadCount = datasetDownloadMapper.countDownloadLogsBetween(yesterdayStart, todayStart);
+        List<String> supportedFormats = datasetDownloadMapper.findDownloadSearchFileFormats();
+
+        DownloadDatasetSummaryDto summary = new DownloadDatasetSummaryDto();
+        summary.setTotalDatasetCount(totalDatasetCount == null ? 0 : totalDatasetCount);
+        summary.setTodayDownloadCount(todayDownloadCount == null ? 0 : todayDownloadCount);
+        summary.setYesterdayDownloadCount(yesterdayDownloadCount == null ? 0 : yesterdayDownloadCount);
+        summary.setDownloadChangeRate(calculateChangeRate(summary.getTodayDownloadCount(), summary.getYesterdayDownloadCount()));
+        summary.setSupportedFormats(supportedFormats);
+        summary.setSupportedFormatCount(supportedFormats == null ? 0 : supportedFormats.size());
+        summary.setPopularDataset(datasetDownloadMapper.findPopularApprovedDataset());
+
+        return summary;
+    }
+
+    private DownloadDatasetSearchOptionsDto buildSearchOptions() {
+        DownloadDatasetSearchOptionsDto options = new DownloadDatasetSearchOptionsDto();
+        options.setProviders(datasetDownloadMapper.findDownloadSearchProviders());
+        options.setFileFormats(datasetDownloadMapper.findDownloadSearchFileFormats());
+        options.setCategories(datasetDownloadMapper.findDownloadSearchCategories());
+        return options;
+    }
+
+    private double calculateChangeRate(int todayCount, int yesterdayCount) {
+        if (yesterdayCount == 0) {
+            return todayCount > 0 ? 100.0 : 0.0;
+        }
+
+        double rate = ((double) (todayCount - yesterdayCount) / yesterdayCount) * 100;
+        return Math.round(rate * 10.0) / 10.0;
+    }
+
+    private int clamp(int value, int min, int max) {
+        return Math.min(Math.max(value, min), max);
+    }
+
+    private String normalizeFilter(String value) {
+        if (value == null) {
+            return null;
+        }
+
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private String normalizeSort(String sort) {
+        String normalized = normalizeFilter(sort);
+        if (normalized == null) {
+            return "default";
+        }
+
+        return switch (normalized) {
+            case "viewCount", "downloadCount", "updatedAt", "title" -> normalized;
+            default -> "default";
+        };
     }
 
     public DatasetDownloadPageDto getDatasetDownloadPage(Long datasetId, Integer userId, String viewIp) {
@@ -86,9 +230,146 @@ public class DatasetDownloadService {
         response.setDataset(dataset);
         response.setSourceFile(sourceFile);
         response.setStats(stats);
-        response.setAvailableFormats(List.of("CSV", "GeoJSON", "SHP", "XLSX", "TIFF"));
+        List<DownloadFormatOptionDto> downloadFormats = buildDownloadFormatOptions(datasetId, dataset, sourceFile);
+        List<String> availableFormats = new ArrayList<>();
+        for (DownloadFormatOptionDto option : downloadFormats) {
+            if (Boolean.TRUE.equals(option.getAvailable())) {
+                availableFormats.add(option.getFormat());
+            }
+        }
+        response.setAvailableFormats(availableFormats);
+        response.setDownloadFormats(downloadFormats);
+        response.setAttributePreview(buildAttributePreview(datasetId));
+        response.setRelatedDatasets(datasetDownloadMapper.findRelatedApprovedDatasets(datasetId));
+        response.setFavorite(userId != null && isDatasetFavorite(datasetId, userId));
 
         return response;
+    }
+
+    public DatasetFavoriteResponseDto toggleDatasetFavorite(Long datasetId, Integer userId) {
+        if (userId == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "로그인이 필요한 기능입니다.");
+        }
+
+        DownloadDatasetDetailDto dataset = datasetDownloadMapper.findDatasetDetailById(datasetId);
+
+        if (dataset == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "데이터셋을 찾을 수 없습니다.");
+        }
+
+        validateDatasetDetailAccess(dataset, userId);
+
+        boolean favorite = isDatasetFavorite(datasetId, userId);
+        boolean nextFavorite = !favorite;
+
+        if (favorite) {
+            datasetDownloadMapper.deleteDatasetFavorite(datasetId, userId);
+        } else {
+            datasetDownloadMapper.insertDatasetFavorite(datasetId, userId);
+        }
+
+        DatasetFavoriteResponseDto response = new DatasetFavoriteResponseDto();
+        response.setFavorite(nextFavorite);
+        return response;
+    }
+
+    private boolean isDatasetFavorite(Long datasetId, Integer userId) {
+        Integer count = datasetDownloadMapper.countDatasetFavorite(datasetId, userId);
+        return count != null && count > 0;
+    }
+
+    private List<DownloadFormatOptionDto> buildDownloadFormatOptions(
+            Long datasetId,
+            DownloadDatasetDetailDto dataset,
+            DownloadDatasetFileDto sourceFile
+    ) {
+        List<DownloadFormatOptionDto> options = new ArrayList<>();
+        String originalFormat = sourceFile == null ? "" : normalizeSourceFormat(sourceFile.getFileExtension());
+
+        for (String format : DOWNLOAD_FORMATS) {
+            String normalizedFormat = normalizeDownloadFormat(format);
+            DownloadFormatOptionDto option = new DownloadFormatOptionDto();
+            option.setFormat(format);
+            option.setAvailable(false);
+            option.setOriginal(false);
+
+            if (sourceFile == null) {
+                option.setReason("원본 파일 정보 없음");
+            } else if (normalizedFormat.equals(originalFormat)) {
+                option.setAvailable(true);
+                option.setOriginal(true);
+                option.setFileSize(sourceFile.getFileSize());
+                option.setReason("원본 파일");
+            } else if (CONVERTIBLE_FORMATS.contains(normalizedFormat)) {
+                Long convertedFileSize = calculateConvertedFileSize(datasetId, dataset.getTitle(), normalizedFormat);
+                if (convertedFileSize == null) {
+                    option.setReason("변환할 데이터 없음");
+                } else {
+                    option.setAvailable(true);
+                    option.setFileSize(convertedFileSize);
+                    option.setReason("변환 가능");
+                }
+            } else {
+                option.setReason("변환 미지원");
+            }
+
+            options.add(option);
+        }
+
+        return options;
+    }
+
+    private Long calculateConvertedFileSize(Long datasetId, String datasetTitle, String normalizedFormat) {
+        try {
+            DownloadExportResultDto result = switch (normalizedFormat) {
+                case "CSV" -> exportCsv(datasetId, datasetTitle);
+                case "GEOJSON" -> exportGeoJson(datasetId, datasetTitle);
+                case "XLSX" -> exportXlsx(datasetId, datasetTitle);
+                default -> null;
+            };
+
+            if (result == null || result.getBytes() == null) {
+                return null;
+            }
+
+            return (long) result.getBytes().length;
+        } catch (ResponseStatusException e) {
+            return null;
+        }
+    }
+
+    private DownloadAttributePreviewDto buildAttributePreview(Long datasetId) {
+        List<DatasetFeatureExportDto> features = datasetDownloadMapper.findDatasetAttributePreviewRows(datasetId);
+        LinkedHashSet<String> columns = new LinkedHashSet<>();
+        List<Map<String, Object>> rows = new ArrayList<>();
+
+        columns.add("feature_id");
+        columns.add("feature_name");
+        columns.add("spatial_type");
+
+        for (DatasetFeatureExportDto feature : features) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("feature_id", feature.getFeatureId());
+            row.put("feature_name", feature.getFeatureName());
+            row.put("spatial_type", feature.getSpatialType());
+
+            Map<String, Object> properties = parseProperties(feature.getPropertiesJson());
+            row.putAll(properties);
+            columns.addAll(properties.keySet());
+            rows.add(row);
+        }
+
+        List<String> columnList = new ArrayList<>(columns);
+        for (Map<String, Object> row : rows) {
+            for (String column : columnList) {
+                row.putIfAbsent(column, null);
+            }
+        }
+
+        DownloadAttributePreviewDto preview = new DownloadAttributePreviewDto();
+        preview.setColumns(columnList);
+        preview.setRows(rows);
+        return preview;
     }
 
     private void validateDatasetDetailAccess(DownloadDatasetDetailDto dataset, Integer userId) {
@@ -191,7 +472,7 @@ public class DatasetDownloadService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "원본 파일 정보를 찾을 수 없습니다.");
         }
 
-        String normalizedFormat = format == null ? "" : format.trim().toUpperCase(Locale.ROOT);
+        String normalizedFormat = normalizeDownloadFormat(format);
         String originalFormat = normalizeSourceFormat(sourceFile.getFileExtension());
 
         DownloadExportResultDto result;
@@ -253,6 +534,19 @@ public class DatasetDownloadService {
         }
 
         return ext;
+    }
+
+    private String normalizeDownloadFormat(String format) {
+        if (format == null || format.isBlank()) {
+            return "";
+        }
+
+        String normalizedFormat = format.trim().toUpperCase(Locale.ROOT);
+        if ("JSON".equals(normalizedFormat)) {
+            return "GEOJSON";
+        }
+
+        return normalizedFormat;
     }
 
     private DownloadExportResultDto downloadOriginalFileFromS3(DownloadDatasetFileDto sourceFile) {
