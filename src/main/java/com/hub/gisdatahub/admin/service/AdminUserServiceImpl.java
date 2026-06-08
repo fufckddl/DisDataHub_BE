@@ -2,28 +2,41 @@ package com.hub.gisdatahub.admin.service;
 
 import java.util.List;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.hub.gisdatahub.admin.dto.UserManagementLogDto;
 import com.hub.gisdatahub.admin.dto.UserManagementTypeDto;
 import com.hub.gisdatahub.admin.mapper.AdminUserMapper;
-
-import lombok.RequiredArgsConstructor;
+import com.hub.gisdatahub.user.domain.User;
 
 @Service
-@RequiredArgsConstructor
 public class AdminUserServiceImpl implements AdminUserService {
 
-    private final AdminUserMapper adminUserMapper;
+    @Autowired
+    public AdminUserMapper adminUserMapper;
 
     @Override
-    public List<UserManagementTypeDto> getUserManagementTypeList() {
-        return adminUserMapper.selectUserManagementTypeList();
+    public List<User> getUserList() {
+        return adminUserMapper.findUserAll();
     }
 
     @Override
-    public Integer registerUserManagementLog(UserManagementLogDto userManagementLogDto) {
-        return adminUserMapper.insertUserManagementLog(userManagementLogDto);
+    public User getUser(Integer id) {
+        return adminUserMapper.findUserById(id);
     }
 
+    @Override
+    public List<UserManagementTypeDto> getManagementTypeList() {
+        return adminUserMapper.findUserManagementTypeList();
+    }
+
+    @Override
+    public void applyUserManagement(UserManagementLogDto userManagementLogDto, String status) {
+
+        Integer targetUserId = userManagementLogDto.getTargetUserId();
+
+        adminUserMapper.updateUserStatus(targetUserId, status);
+        adminUserMapper.insertUserManagementLog(userManagementLogDto);
+    }
 }
