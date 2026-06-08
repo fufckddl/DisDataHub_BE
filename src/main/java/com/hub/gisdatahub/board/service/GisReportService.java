@@ -6,6 +6,7 @@ import com.hub.gisdatahub.board.dto.AdminGisReportProcessRequestDto;
 import com.hub.gisdatahub.board.dto.GisReportCreateRequestDto;
 import com.hub.gisdatahub.board.dto.GisReportDetailDto;
 import com.hub.gisdatahub.board.dto.GisReportProcessHistoryDto;
+import com.hub.gisdatahub.board.dto.GisReportSearchRequestDto;
 
 public interface GisReportService {
     public List<GisReportDetailDto> getGisReportList();
@@ -41,4 +42,6 @@ public interface GisReportService {
 
     // 사용자 본인 GIS 오류제보 삭제
     public void deleteMyGisReport(Long postId, Integer loginUserId);
+
+    public List<GisReportDetailDto> getGisReportSearchList(GisReportSearchRequestDto searchDto);
 }

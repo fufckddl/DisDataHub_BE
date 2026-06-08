@@ -8,6 +8,7 @@ import org.apache.ibatis.annotations.Param;
 import com.hub.gisdatahub.board.dto.GisReportCreateRequestDto;
 import com.hub.gisdatahub.board.dto.GisReportDetailDto;
 import com.hub.gisdatahub.board.dto.GisReportProcessHistoryDto;
+import com.hub.gisdatahub.board.dto.GisReportSearchRequestDto;
 
 @Mapper
 public interface GisReportSqlMapper {
@@ -51,4 +52,7 @@ public interface GisReportSqlMapper {
         @Param("postId") Long postId,
         @Param("userId") Integer userId
     );
+
+    // 사용자 GIS 오류제보 검색/마커 목록 조회
+    public List<GisReportDetailDto> findGisReportSearchList(GisReportSearchRequestDto searchDto);
 }
