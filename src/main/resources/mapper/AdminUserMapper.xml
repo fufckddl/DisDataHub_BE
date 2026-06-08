@@ -5,28 +5,56 @@
 
 <mapper namespace="com.hub.gisdatahub.admin.mapper.AdminUserMapper">
 
-<select id="selectUserManagementTypeList">
-    SELECT
-        type_id,
-        type_code,
-        type_name,
-        target_role,
-        duration_days,
-        created_at
-    FROM sd_user_management_type
+<resultMap id="userResultMap" type="com.hub.gisdatahub.user.domain.User">
+    <id property="id" column="user_id" />
+    <result property="accountName" column="account_name" />
+    <result property="password" column="password" />
+    <result property="username" column="username" />
+    <result property="role" column="role" />
+    <result property="gender" column="gender" />
+    <result property="email" column="email" />
+    <result property="organization" column="organization" />
+    <result property="department" column="department" />
+    <result property="status" column="status" />
+    <result property="updated_at" column="updated_at" />
+    <result property="deleted_at" column="deleted_at" />
+    <result property="created_at" column="created_at" />
+</resultMap>
+
+<select id="findUserAll" resultMap="userResultMap">
+    SELECT *
+    FROM sd_user su
+    ORDER BY su.user_id ASC
 </select>
 
+<select id="findUserById" resultMap="userResultMap">
+    SELECT *
+    FROM sd_user su
+    WHERE su.user_id = #{id}
+</select>
+
+<select id="findUserManagementTypeList">
+    select * from sd_user_management_type sumt
+</select>
+
+<update id="updateUserStatus">
+    update sd_user su
+    set status = CAST(#{status} AS sd_user_status)
+    where su.user_id = #{id}
+</update>
+
 <insert id="insertUserManagementLog">
-    INSERT INTO sd_user_management_log (
+    insert into sd_user_management_log (
         admin_user_id,
         target_user_id,
         type_id,
         description
-    ) value (
+    )
+    values (
         #{adminUserId},
         #{targetUserId},
         #{typeId},
-        #{descript}
+        #{description}
     )
 </insert>
 
