@@ -291,6 +291,60 @@ class DashboardBoundaryServiceTest {
         assertThat(paramsCaptor.getAllValues().get(2).getValue("selectedAreaLabel")).isEqualTo("충청남도 아산시");
     }
 
+    @Test
+    void getDashboardGisFeaturesIncludesStandardPointDatasetProperties() {
+        when(jdbcTemplate.queryForObject(anyString(), any(MapSqlParameterSource.class), eq(String.class)))
+                .thenReturn("{\"type\":\"FeatureCollection\",\"features\":[]}");
+
+        service.getDashboardGisFeatures("STANDARD_LIBRARY_MAIN", null, null, 100);
+
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        verify(jdbcTemplate).queryForObject(sqlCaptor.capture(), any(MapSqlParameterSource.class), eq(String.class));
+
+        assertThat(sqlCaptor.getValue())
+                .contains("'openTime'")
+                .contains("'closeTime'")
+                .contains("'phoneNumber'")
+                .contains("'facilityType'")
+                .contains("'managerName'");
+    }
+
+    @Test
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    void getDashboardGisFeaturesMatchesSelectedRegionBySourceAreaCodeHierarchy() throws SQLException {
+        when(jdbcTemplate.query(anyString(), any(MapSqlParameterSource.class), any(RowMapper.class)))
+                .thenAnswer(invocation -> {
+                    RowMapper rowMapper = invocation.getArgument(2);
+                    return List.of(rowMapper.mapRow(resultSet(Map.of(
+                            "area_code", "5013000000",
+                            "sido_code", "50",
+                            "sigungu_code", "50130",
+                            "eupmyeondong_code", "50130000",
+                            "name", "서귀포시",
+                            "full_name", "제주특별자치도 서귀포시",
+                            "level", "SIGUNGU")), 0));
+                });
+        when(jdbcTemplate.queryForObject(anyString(), any(MapSqlParameterSource.class), eq(String.class)))
+                .thenReturn("{\"type\":\"FeatureCollection\",\"features\":[]}");
+
+        service.getDashboardGisFeatures("KECO_EV_CHARGER_MAIN", null, "5013000000", 100);
+
+        ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<MapSqlParameterSource> paramsCaptor = ArgumentCaptor.forClass(MapSqlParameterSource.class);
+        verify(jdbcTemplate).queryForObject(sqlCaptor.capture(), paramsCaptor.capture(), eq(String.class));
+
+        assertThat(sqlCaptor.getValue())
+                .contains("f.source_area_code IN (:scopeAreaCodes)")
+                .contains("selected_area.level = 'SIGUNGU'")
+                .contains("f.source_area_code LIKE selected_area.sigungu_code")
+                .contains("b.area_code = :selectedAreaCode");
+        assertThat(paramsCaptor.getValue().getValue("selectedAreaCode")).isEqualTo("5013000000");
+        @SuppressWarnings("unchecked")
+        Iterable<String> scopeAreaCodes = (Iterable<String>) paramsCaptor.getValue().getValue("scopeAreaCodes");
+        assertThat(scopeAreaCodes)
+                .contains("5013000000", "50", "50130");
+    }
+
     @SuppressWarnings({ "rawtypes", "unchecked" })
     private void whenAreaMetaQueriesReturn(
             Map<String, String> areaRow,
@@ -322,4 +376,5 @@ class DashboardBoundaryServiceTest {
         when(resultSet.getString("level")).thenReturn(row.get("level"));
         return resultSet;
     }
+
 }

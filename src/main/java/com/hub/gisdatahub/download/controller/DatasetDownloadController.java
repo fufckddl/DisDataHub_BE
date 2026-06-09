@@ -1,10 +1,12 @@
 package com.hub.gisdatahub.download.controller;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.util.List;
 
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -149,8 +151,14 @@ public class DatasetDownloadController {
     DownloadExportResultDto result =
             datasetDownloadService.downloadDatasetByFormat(datasetId, format, userId, downloadIp);
 
+    String contentDisposition = ContentDisposition.attachment()
+            .filename(result.getFileName(), StandardCharsets.UTF_8)
+            .build()
+            .toString();
+
     return ResponseEntity.ok()
-            .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + result.getFileName() + "\"")
+            .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition)
+            .header(HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.CONTENT_DISPOSITION)
             .contentType(MediaType.parseMediaType(result.getContentType()))
             .body(new ByteArrayResource(result.getBytes()));            
 
