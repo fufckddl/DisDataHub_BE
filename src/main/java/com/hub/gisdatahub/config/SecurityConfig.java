@@ -72,6 +72,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/opendata/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/dashboard/**").permitAll()
                         .requestMatchers("/error").permitAll()
+                        // GIS 오류 게시판 검색 허용
+                        .requestMatchers(HttpMethod.GET, "/api/board/gis-reports/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/board/gis-reports/search").permitAll()
                         // 행정구역 셀렉트 API 허용
                         .requestMatchers(HttpMethod.GET, "/api/regions/**").permitAll()
                         // 주소 좌표 변환 API 허용

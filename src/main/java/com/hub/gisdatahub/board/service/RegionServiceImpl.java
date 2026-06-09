@@ -22,7 +22,7 @@ public class RegionServiceImpl implements RegionService {
                 FROM region_code
                 WHERE depth = 1
                   AND use_yn = 'Y'
-                ORDER BY code
+                ORDER BY name ASC
                 """;
 
         return jdbcTemplate.query(sql, (rs, rowNum) ->
@@ -41,7 +41,7 @@ public class RegionServiceImpl implements RegionService {
                 WHERE parent_code = ?
                   AND depth = 2
                   AND use_yn = 'Y'
-                ORDER BY code
+                ORDER BY name ASC
                 """;
 
         return jdbcTemplate.query(sql, (rs, rowNum) ->
@@ -61,7 +61,7 @@ public class RegionServiceImpl implements RegionService {
                 WHERE parent_code = ?
                   AND depth = 3
                   AND use_yn = 'Y'
-                ORDER BY code
+                ORDER BY name ASC
                 """;
 
         return jdbcTemplate.query(sql, (rs, rowNum) ->
