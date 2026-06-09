@@ -24,7 +24,7 @@
         WHERE board_type_code = 'NOTICE'
           AND visibility_status = 'PUBLIC'
           AND deleted_yn = 'N'
-        ORDER BY pinned_yn DESC, created_at DESC
+        ORDER BY pinned_yn DESC, created_at DESC, post_id DESC
     </select>
 
     <!-- 사용자 공지사항 상세 조회 -->
@@ -48,6 +48,58 @@
           AND board_type_code = 'NOTICE'
           AND visibility_status = 'PUBLIC'
           AND deleted_yn = 'N'
+    </select>
+
+    <!-- 사용자 공지사항 이전글: 사용자 목록에서 현재 글 바로 위 글 -->
+    <select id="findPreviousNoticePostId"
+            parameterType="long"
+            resultType="long">
+        WITH notice_list AS (
+            SELECT
+                post_id,
+                ROW_NUMBER() OVER (
+                    ORDER BY pinned_yn DESC, created_at DESC, post_id DESC
+                ) AS rn
+            FROM sd_board_post
+            WHERE board_type_code = 'NOTICE'
+              AND visibility_status = 'PUBLIC'
+              AND deleted_yn = 'N'
+        ),
+        current_notice AS (
+            SELECT rn
+            FROM notice_list
+            WHERE post_id = #{postId}
+        )
+        SELECT notice_list.post_id
+        FROM notice_list, current_notice
+        WHERE notice_list.rn = current_notice.rn - 1
+        LIMIT 1
+    </select>
+
+    <!-- 사용자 공지사항 다음글: 사용자 목록에서 현재 글 바로 아래 글 -->
+    <select id="findNextNoticePostId"
+            parameterType="long"
+            resultType="long">
+        WITH notice_list AS (
+            SELECT
+                post_id,
+                ROW_NUMBER() OVER (
+                    ORDER BY pinned_yn DESC, created_at DESC, post_id DESC
+                ) AS rn
+            FROM sd_board_post
+            WHERE board_type_code = 'NOTICE'
+              AND visibility_status = 'PUBLIC'
+              AND deleted_yn = 'N'
+        ),
+        current_notice AS (
+            SELECT rn
+            FROM notice_list
+            WHERE post_id = #{postId}
+        )
+        SELECT notice_list.post_id
+        FROM notice_list, current_notice
+        WHERE notice_list.rn = current_notice.rn + 1
+        LIMIT 1
     </select>
 
     <!-- 사용자 공지사항 상세 조회 시 조회수 증가 -->
@@ -105,7 +157,8 @@
         ORDER BY
             deleted_yn ASC,
             pinned_yn DESC,
-            created_at DESC
+            created_at DESC,
+            post_id DESC
     </select>
 
     <!-- 관리자 공지사항 상세 조회 -->
@@ -127,6 +180,54 @@
         FROM sd_board_post
         WHERE post_id = #{postId}
           AND board_type_code = 'NOTICE'
+    </select>
+
+    <!-- 관리자 공지사항 이전글: 관리자 목록에서 현재 글 바로 위 글 -->
+    <select id="findPreviousAdminNoticePostId"
+            parameterType="long"
+            resultType="long">
+        WITH notice_list AS (
+            SELECT
+                post_id,
+                ROW_NUMBER() OVER (
+                    ORDER BY deleted_yn ASC, pinned_yn DESC, created_at DESC, post_id DESC
+                ) AS rn
+            FROM sd_board_post
+            WHERE board_type_code = 'NOTICE'
+        ),
+        current_notice AS (
+            SELECT rn
+            FROM notice_list
+            WHERE post_id = #{postId}
+        )
+        SELECT notice_list.post_id
+        FROM notice_list, current_notice
+        WHERE notice_list.rn = current_notice.rn - 1
+        LIMIT 1
+    </select>
+
+    <!-- 관리자 공지사항 다음글: 관리자 목록에서 현재 글 바로 아래 글 -->
+    <select id="findNextAdminNoticePostId"
+            parameterType="long"
+            resultType="long">
+        WITH notice_list AS (
+            SELECT
+                post_id,
+                ROW_NUMBER() OVER (
+                    ORDER BY deleted_yn ASC, pinned_yn DESC, created_at DESC, post_id DESC
+                ) AS rn
+            FROM sd_board_post
+            WHERE board_type_code = 'NOTICE'
+        ),
+        current_notice AS (
+            SELECT rn
+            FROM notice_list
+            WHERE post_id = #{postId}
+        )
+        SELECT notice_list.post_id
+        FROM notice_list, current_notice
+        WHERE notice_list.rn = current_notice.rn + 1
+        LIMIT 1
     </select>
 
     <!-- 공지사항 수정 -->

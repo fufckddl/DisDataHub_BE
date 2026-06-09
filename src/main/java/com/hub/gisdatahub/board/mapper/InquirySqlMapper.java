@@ -12,6 +12,7 @@ import com.hub.gisdatahub.board.dto.InquiryDetailDto;
 
 @Mapper
 public interface InquirySqlMapper {
+
     // 사용자 질문 목록 조회: 공개글 + 로그인 사용자의 비공개글
     public List<InquiryDetailDto> findInquiryList(
             @Param("loginUserId") Integer loginUserId
@@ -35,11 +36,29 @@ public interface InquirySqlMapper {
             @Param("loginUserId") Integer loginUserId
     );
 
+    // 사용자 문의 이전글
+    public Long findPreviousInquiryPostId(
+            @Param("postId") Long postId,
+            @Param("loginUserId") Integer loginUserId
+    );
+
+    // 사용자 문의 다음글
+    public Long findNextInquiryPostId(
+            @Param("postId") Long postId,
+            @Param("loginUserId") Integer loginUserId
+    );
+
     // 관리자 질문게시판 목록 조회
     public List<InquiryDetailDto> findAdminInquiryList();
 
     // 관리자 질문게시글 상세 조회
     public InquiryDetailDto findAdminInquiryDetail(Long postId);
+
+    // 관리자 문의 이전글
+    public Long findPreviousAdminInquiryPostId(Long postId);
+
+    // 관리자 문의 다음글
+    public Long findNextAdminInquiryPostId(Long postId);
 
     // 관리자 답변 저장
     public void insertInquiryAnswer(BoardReplyDto boardReplyDto);

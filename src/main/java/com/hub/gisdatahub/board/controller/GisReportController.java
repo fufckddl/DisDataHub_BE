@@ -80,6 +80,9 @@ public class GisReportController {
         List<GisReportProcessHistoryDto> processHistoryList =
                 gisReportService.getGisReportProcessHistoryList(postId);
 
+        Long previousPostId = gisReportService.getPreviousGisReportPostId(postId);
+        Long nextPostId = gisReportService.getNextGisReportPostId(postId);
+
         boolean isOwner = false;
 
         if (authentication != null && authentication.isAuthenticated() && gisReportDetail != null) {
@@ -93,6 +96,8 @@ public class GisReportController {
 
         response.put("gisReportDetail", gisReportDetail);
         response.put("processHistoryList", processHistoryList);
+        response.put("previousPostId", previousPostId);
+        response.put("nextPostId", nextPostId);
         response.put("isOwner", isOwner);
         response.put("result", "success");
 
@@ -128,6 +133,11 @@ public class GisReportController {
         List<GisReportProcessHistoryDto> processHistoryList =
                 gisReportService.getGisReportProcessHistoryList(postId);
 
+        Long previousPostId = gisReportService.getPreviousAdminGisReportPostId(postId);
+        Long nextPostId = gisReportService.getNextAdminGisReportPostId(postId);
+
+        response.put("previousPostId", previousPostId);
+        response.put("nextPostId", nextPostId);
         response.put("adminGisReportDetail", adminGisReportDetail);
         response.put("processHistoryList", processHistoryList);
         response.put("result", "success");
@@ -170,7 +180,6 @@ public class GisReportController {
         return response;
     }
 
-    // 사용자 본인 GIS 오류제보 수정
     @PutMapping("{postId}")
     public Map<String, Object> updateMyGisReport(
             @PathVariable("postId") Long postId,
@@ -192,7 +201,6 @@ public class GisReportController {
         return response;
     }
 
-    // 사용자 본인 GIS 오류제보 삭제
     @DeleteMapping("{postId}")
     public Map<String, Object> deleteMyGisReport(
             @PathVariable("postId") Long postId,

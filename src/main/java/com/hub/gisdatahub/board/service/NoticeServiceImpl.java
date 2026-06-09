@@ -27,6 +27,16 @@ public class NoticeServiceImpl implements NoticeService {
     }
 
     @Override
+    public Long getPreviousNoticePostId(Long postId) {
+        return noticeSqlMapper.findPreviousNoticePostId(postId);
+    }
+
+    @Override
+    public Long getNextNoticePostId(Long postId) {
+        return noticeSqlMapper.findNextNoticePostId(postId);
+    }
+
+    @Override
     public void createNoticePost(BoardPostDto boardPostDto) {
         if (boardPostDto.getVisibilityStatus() == null) {
             boardPostDto.setVisibilityStatus("PUBLIC");
@@ -35,7 +45,7 @@ public class NoticeServiceImpl implements NoticeService {
         if (boardPostDto.getPinnedYn() == null) {
             boardPostDto.setPinnedYn("N");
         }
-        
+
         noticeSqlMapper.insertNotice(boardPostDto);
     }
 
@@ -47,6 +57,16 @@ public class NoticeServiceImpl implements NoticeService {
     @Override
     public BoardPostDto getAdminNoticeDetailData(Long postId) {
         return noticeSqlMapper.findByAdminDetailPage(postId);
+    }
+
+    @Override
+    public Long getPreviousAdminNoticePostId(Long postId) {
+        return noticeSqlMapper.findPreviousAdminNoticePostId(postId);
+    }
+
+    @Override
+    public Long getNextAdminNoticePostId(Long postId) {
+        return noticeSqlMapper.findNextAdminNoticePostId(postId);
     }
 
     @Override

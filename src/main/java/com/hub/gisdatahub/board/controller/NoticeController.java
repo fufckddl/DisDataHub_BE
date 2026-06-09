@@ -49,7 +49,17 @@ public class NoticeController {
 
         BoardPostDto noticeDetail = noticeService.getNoticeDetailData(postId);
 
+        Long previousPostId = null;
+        Long nextPostId = null;
+
+        if (noticeDetail != null) {
+            previousPostId = noticeService.getPreviousNoticePostId(postId);
+            nextPostId = noticeService.getNextNoticePostId(postId);
+        }
+
         response.put("noticeDetail", noticeDetail);
+        response.put("previousPostId", previousPostId);
+        response.put("nextPostId", nextPostId);
         response.put("result", "success");
 
         return response;
@@ -100,7 +110,17 @@ public class NoticeController {
 
         BoardPostDto adminNoticeDetail = noticeService.getAdminNoticeDetailData(postId);
 
+        Long previousPostId = null;
+        Long nextPostId = null;
+
+        if (adminNoticeDetail != null) {
+            previousPostId = noticeService.getPreviousAdminNoticePostId(postId);
+            nextPostId = noticeService.getNextAdminNoticePostId(postId);
+        }
+
         response.put("adminNoticeDetail", adminNoticeDetail);
+        response.put("previousPostId", previousPostId);
+        response.put("nextPostId", nextPostId);
         response.put("result", "success");
 
         return response;

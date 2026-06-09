@@ -55,4 +55,12 @@ public interface GisReportSqlMapper {
 
     // 사용자 GIS 오류제보 검색/마커 목록 조회
     public List<GisReportDetailDto> findGisReportSearchList(GisReportSearchRequestDto searchDto);
+    // 유저용 상세페이지 뒤로가기 버튼
+    public Long findPreviousGisReportPostId(Long postId);
+    //유저용 상세페이지 앞으로가기 버튼
+    public Long findNextGisReportPostId(Long postId);
+    // 관리자용 상세페이지 뒤로가기
+    public Long findPreviousAdminGisReportPostId(Long postId);
+    // 관리자용 상세페이지 앞으로가기
+    public Long findNextAdminGisReportPostId(Long postId);
 }

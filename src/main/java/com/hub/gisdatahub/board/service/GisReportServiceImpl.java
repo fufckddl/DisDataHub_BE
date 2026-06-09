@@ -157,5 +157,26 @@ public class GisReportServiceImpl implements GisReportService{
     public List<GisReportDetailDto> getGisReportSearchList(GisReportSearchRequestDto searchDto) {
         return gisReportSqlMapper.findGisReportSearchList(searchDto);
     }
+
+    @Override
+    public Long getPreviousGisReportPostId(Long postId) {
+        return gisReportSqlMapper.findPreviousGisReportPostId(postId);
+    }
+
+    @Override
+    public Long getNextGisReportPostId(Long postId) {
+        return gisReportSqlMapper.findNextGisReportPostId(postId);
+    }
+
+
+    @Override
+    public Long getPreviousAdminGisReportPostId(Long postId) {
+        return gisReportSqlMapper.findPreviousAdminGisReportPostId(postId);
+    }
+
+    @Override
+    public Long getNextAdminGisReportPostId(Long postId) {
+        return gisReportSqlMapper.findNextAdminGisReportPostId(postId);
+    }
 }
 

@@ -514,4 +514,72 @@
 
         ORDER BY bp.created_at DESC
     </select>
+
+    <!-- GIS 오류제보 이전글: 현재 글보다 최신 글 -->
+    <select id="findPreviousGisReportPostId"
+            parameterType="long"
+            resultType="long">
+        SELECT bp.post_id
+        FROM sd_board_post bp
+        WHERE bp.board_type_code = 'GIS_REPORT'
+        AND bp.deleted_yn = 'N'
+        AND bp.visibility_status = 'PUBLIC'
+        AND bp.created_at &gt; (
+            SELECT current_post.created_at
+            FROM sd_board_post current_post
+            WHERE current_post.post_id = #{postId}
+        )
+        ORDER BY bp.created_at ASC
+        LIMIT 1
+    </select>
+
+    <!-- GIS 오류제보 다음글: 현재 글보다 오래된 글 -->
+    <select id="findNextGisReportPostId"
+            parameterType="long"
+            resultType="long">
+        SELECT bp.post_id
+        FROM sd_board_post bp
+        WHERE bp.board_type_code = 'GIS_REPORT'
+        AND bp.deleted_yn = 'N'
+        AND bp.visibility_status = 'PUBLIC'
+        AND bp.created_at &lt; (
+            SELECT current_post.created_at
+            FROM sd_board_post current_post
+            WHERE current_post.post_id = #{postId}
+        )
+        ORDER BY bp.created_at DESC
+        LIMIT 1
+    </select>
+
+    <!-- 관리자 GIS 오류제보 이전글: 현재 글보다 최신 글 -->
+    <select id="findPreviousAdminGisReportPostId"
+            parameterType="long"
+            resultType="long">
+        SELECT bp.post_id
+        FROM sd_board_post bp
+        WHERE bp.board_type_code = 'GIS_REPORT'
+        AND bp.created_at &gt; (
+            SELECT current_post.created_at
+            FROM sd_board_post current_post
+            WHERE current_post.post_id = #{postId}
+        )
+        ORDER BY bp.created_at ASC
+        LIMIT 1
+    </select>
+
+    <!-- 관리자 GIS 오류제보 다음글: 현재 글보다 오래된 글 -->
+    <select id="findNextAdminGisReportPostId"
+            parameterType="long"
+            resultType="long">
+        SELECT bp.post_id
+        FROM sd_board_post bp
+        WHERE bp.board_type_code = 'GIS_REPORT'
+        AND bp.created_at &lt; (
+            SELECT current_post.created_at
+            FROM sd_board_post current_post
+            WHERE current_post.post_id = #{postId}
+        )
+        ORDER BY bp.created_at DESC
+        LIMIT 1
+    </select>
 </mapper>

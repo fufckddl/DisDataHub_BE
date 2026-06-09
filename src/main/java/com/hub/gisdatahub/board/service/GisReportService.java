@@ -44,4 +44,13 @@ public interface GisReportService {
     public void deleteMyGisReport(Long postId, Integer loginUserId);
 
     public List<GisReportDetailDto> getGisReportSearchList(GisReportSearchRequestDto searchDto);
+
+    // 유저용 상세페이지 앞뒤로 가기
+    public Long getPreviousGisReportPostId(Long postId);
+
+    public Long getNextGisReportPostId(Long postId);
+    // 관리자용 상세페이지 앞뒤로 가기 버튼 
+    public Long getPreviousAdminGisReportPostId(Long postId);
+    
+    public Long getNextAdminGisReportPostId(Long postId);
 }

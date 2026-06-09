@@ -97,7 +97,17 @@ public class InquiryController {
                     .equals(String.valueOf(inquiryDetail.getUserId()));
         }
 
+        Long previousPostId = null;
+        Long nextPostId = null;
+
+        if (inquiryDetail != null) {
+            previousPostId = inquiryService.getPreviousInquiryPostId(postId, loginUserId);
+            nextPostId = inquiryService.getNextInquiryPostId(postId, loginUserId);
+        }
+
         response.put("inquiryDetail", inquiryDetail);
+        response.put("previousPostId", previousPostId);
+        response.put("nextPostId", nextPostId);
         response.put("isOwner", isOwner);
         response.put("result", "success");
 
@@ -174,7 +184,12 @@ public class InquiryController {
 
         InquiryDetailDto adminInquiryDetail = inquiryService.getAdminInquiryDetail(postId);
 
+        Long previousPostId = inquiryService.getPreviousAdminInquiryPostId(postId);
+        Long nextPostId = inquiryService.getNextAdminInquiryPostId(postId);
+
         response.put("adminInquiryDetail", adminInquiryDetail);
+        response.put("previousPostId", previousPostId);
+        response.put("nextPostId", nextPostId);
         response.put("result", "success");
 
         return response;
