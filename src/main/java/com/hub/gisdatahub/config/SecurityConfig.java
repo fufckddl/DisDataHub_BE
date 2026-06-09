@@ -72,6 +72,15 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/opendata/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/dashboard/**").permitAll()
                         .requestMatchers("/error").permitAll()
+                        // GIS 오류 게시판 검색 허용
+                        .requestMatchers(HttpMethod.GET, "/api/board/gis-reports/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/board/gis-reports/search").permitAll()
+                        // 행정구역 셀렉트 API 허용
+                        .requestMatchers(HttpMethod.GET, "/api/regions/**").permitAll()
+                        // 주소 좌표 변환 API 허용
+                        .requestMatchers(HttpMethod.GET, "/api/location/geocode").permitAll()
+                        // 주소 검색 api 허용
+                        .requestMatchers(HttpMethod.GET, "/api/location/search").permitAll()
                         // 관리자 게시판 API - 로그인한 사용자만 통과, 실제 ADMIN 검사는 Controller의 AdminAuthService에서 처리
                         .requestMatchers(HttpMethod.GET, "/api/board/gis-reports/admin/**").authenticated()
                         .requestMatchers(HttpMethod.GET, "/api/board/inquiries/adminInquiryList").authenticated()

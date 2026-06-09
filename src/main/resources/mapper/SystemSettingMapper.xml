@@ -5,6 +5,28 @@
 
 <mapper namespace="com.hub.gisdatahub.admin.mapper.SystemSettingMapper">
 
+    <select id="findSystemSettingByKey" resultType="com.hub.gisdatahub.admin.dto.SystemSettingDto">
+        SELECT
+            setting_id AS settingId,
+            setting_key AS settingKey,
+            setting_name AS settingName,
+            setting_value AS settingValue,
+            description,
+            is_editable AS isEditable,
+            created_at AS createdAt,
+            updated_at AS updatedAt
+        FROM sd_system_setting
+        WHERE setting_key = #{settingKey}
+    </select>
+
+    <update id="updateSystemSettingValue">
+        UPDATE sd_system_setting
+        SET
+            setting_value = #{settingValue},
+            updated_at = now()
+        WHERE setting_key = #{settingKey}
+    </update>
+
     <insert id="insertSystemSettingConfigLog">
 
         INSERT INTO sd_system_setting_config_log (
@@ -21,7 +43,20 @@
             #{afterValue},
             #{description}
         )
-
     </insert>
+
+    <select id="findSystemSettingAll" resultType="com.hub.gisdatahub.admin.dto.SystemSettingDto">
+        SELECT
+            setting_id AS settingId,
+            setting_key AS settingKey,
+            setting_name AS settingName,
+            setting_value AS settingValue,
+            description,
+            is_editable AS isEditable,
+            created_at AS createdAt,
+            updated_at AS updatedAt
+        FROM sd_system_setting
+        ORDER BY setting_id ASC
+    </select>
 
 </mapper>

@@ -19,6 +19,7 @@ import com.hub.gisdatahub.board.dto.AdminGisReportProcessRequestDto;
 import com.hub.gisdatahub.board.dto.GisReportCreateRequestDto;
 import com.hub.gisdatahub.board.dto.GisReportDetailDto;
 import com.hub.gisdatahub.board.dto.GisReportProcessHistoryDto;
+import com.hub.gisdatahub.board.dto.GisReportSearchRequestDto;
 import com.hub.gisdatahub.board.service.AdminAuthService;
 import com.hub.gisdatahub.board.service.GisReportService;
 
@@ -207,6 +208,21 @@ public class GisReportController {
 
         gisReportService.deleteMyGisReport(postId, loginUserId);
 
+        response.put("result", "success");
+
+        return response;
+    }
+
+    @PostMapping("search")
+    public Map<String, Object> searchGisReportList(
+            @RequestBody GisReportSearchRequestDto searchDto
+    ) {
+        Map<String, Object> response = new HashMap<>();
+
+        List<GisReportDetailDto> gisReportList =
+                gisReportService.getGisReportSearchList(searchDto);
+
+        response.put("gisReportList", gisReportList);
         response.put("result", "success");
 
         return response;

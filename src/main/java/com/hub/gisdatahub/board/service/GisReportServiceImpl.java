@@ -10,6 +10,7 @@ import com.hub.gisdatahub.board.dto.AdminGisReportProcessRequestDto;
 import com.hub.gisdatahub.board.dto.GisReportCreateRequestDto;
 import com.hub.gisdatahub.board.dto.GisReportDetailDto;
 import com.hub.gisdatahub.board.dto.GisReportProcessHistoryDto;
+import com.hub.gisdatahub.board.dto.GisReportSearchRequestDto;
 import com.hub.gisdatahub.board.mapper.GisReportSqlMapper;
 
 @Service
@@ -150,6 +151,11 @@ public class GisReportServiceImpl implements GisReportService{
         if (deleteCount == 0) {
             throw new RuntimeException("삭제 권한이 없거나 게시글을 찾을 수 없습니다.");
         }
+    }
+
+    @Override
+    public List<GisReportDetailDto> getGisReportSearchList(GisReportSearchRequestDto searchDto) {
+        return gisReportSqlMapper.findGisReportSearchList(searchDto);
     }
 }
 

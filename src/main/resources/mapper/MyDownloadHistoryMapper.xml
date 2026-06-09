@@ -35,7 +35,7 @@
             d.provider as "provider",
             c.category_name_ko as "categoryNameKo",
             coalesce(l.download_format, upper(replace(f.file_extension, '.', ''))) as "downloadFormat",
-            f.file_size as "fileSize",
+            coalesce(l.download_file_size, f.file_size) as "fileSize",
             l.created_at as "downloadedAt"
         <include refid="myDownloadHistoryFromWhere"/>
         <choose>
