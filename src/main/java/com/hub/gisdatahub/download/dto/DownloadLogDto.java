@@ -12,6 +12,7 @@ public class DownloadLogDto {
     private Long fileId;
     private Integer userId;
     private String downloadFormat;
+    private Long downloadFileSize;
     private String downloadStatus;
     private String errorMessage;
     private String downloadIp;
