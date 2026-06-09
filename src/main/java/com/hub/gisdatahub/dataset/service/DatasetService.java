@@ -1,6 +1,5 @@
 package com.hub.gisdatahub.dataset.service;
 
-import java.io.File;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -152,5 +151,34 @@ public class DatasetService {
         } catch (Exception e) {
             System.err.println("🚨 JSON 변환 실패: " + e.getMessage());
         }
+    }
+
+    // 나의 업로드 데이터 삭제 (REQUEST, REJECTED만 해당)
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteMyDataset(Long datasetId, int userId) {
+        System.out.println("🗑️ [작업 반장] 데이터셋(" + datasetId + ") 삭제 프로세스를 시작합니다.");
+
+        // 1. 현재 상태와 저장된 파일명 조회
+        String status = datasetMapper.selectDatasetStatusById(datasetId);
+        String storedFilename = datasetMapper.selectStoredFilenameByDatasetId(datasetId);
+
+        if (status == null) {
+            throw new RuntimeException("존재하지 않거나 이미 삭제된 데이터셋입니다.");
+        }
+        if ("APPROVED".equals(status)) {
+            throw new RuntimeException("이미 승인 완료된 데이터는 삭제할 수 없습니다.");
+        }
+
+        // 2. 심사 대기중(REQUEST)인 경우 S3(tempFiles)에 있는 원본 파일 삭제
+        if ("REQUEST".equals(status)) {
+            if (storedFilename != null && !storedFilename.isEmpty()) {
+                System.out.println("☁️ [작업 반장] REQUEST 상태입니다. S3 tempFiles에서 파일을 삭제합니다: " + storedFilename);
+                fileUploadService.deleteTempFile(storedFilename);
+            }
+        }
+
+        // 반려(REJECTED) 상태는 S3 파일이 이미 없으므로 DB 단계로 바로 넘어감
+        datasetMapper.deleteDatasetByIdAndUserId(datasetId, userId);
+        System.out.println("💥 [작업 반장] DB 삭제 완료! CASCADE로 관련 데이터가 모두 소멸되었습니다.");
     }
 }
