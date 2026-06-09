@@ -363,4 +363,9 @@
           AND validation_status = 'VALID'
           AND geom_4326 IS NOT NULL
     </select>
+
+    <delete id="deleteDatasetByIdAndUserId">
+        DELETE FROM sd_gis_dataset
+        WHERE dataset_id = #{datasetId} AND created_by = #{userId}
+    </delete>
 </mapper>

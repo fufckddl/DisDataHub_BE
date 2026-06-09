@@ -2,6 +2,7 @@ package com.hub.gisdatahub.dataset.controller;
 
 import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication; // 🚀 필수 임포트 유지
@@ -169,6 +170,22 @@ public class AdminApprovalController {
             System.err.println("🚨 지도 데이터 조회 중 서버 내부 오류: " + e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body("지도 시각화 데이터를 불러오는 중 오류가 발생했습니다.");
+        }
+    }
+
+    @GetMapping("/approvals/{datasetId}/download")
+    public ResponseEntity<Resource> downloadOriginalFile(@PathVariable("datasetId") Long datasetId, Authentication authentication) {
+        System.out.println("[관리자 컨트롤러] 원본 파일 다운로드 요청 접수 - datasetId: " + datasetId);
+
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
+        try {
+            return adminApprovalService.downloadDatasetFile(datasetId);
+        } catch (Exception e) {
+            System.err.println("🚨 파일 다운로드 중 에러 발생: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
 }

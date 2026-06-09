@@ -4,6 +4,8 @@ import java.io.File;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.Resource;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -13,6 +15,8 @@ import com.hub.gisdatahub.dataset.dto.AdminApprovalDetailResponseDto;
 import com.hub.gisdatahub.dataset.dto.AdminApprovalResponseDto;
 import com.hub.gisdatahub.dataset.dto.MapFeatureDto;
 import com.hub.gisdatahub.dataset.mapper.DatasetMapper;
+import com.hub.gisdatahub.s3.dto.S3DownloadResult;
+import com.hub.gisdatahub.s3.service.S3FileService;
 
 @Service
 public class AdminApprovalService {
@@ -22,6 +26,9 @@ public class AdminApprovalService {
 
     @Autowired
     private FileUploadService fileUploadService;
+
+    @Autowired
+    private S3FileService s3FileService;
 
     @Transactional(readOnly = true)
     public List<AdminApprovalResponseDto> getPendingApprovals() {
@@ -176,6 +183,23 @@ public class AdminApprovalService {
         System.out.println("[지도 시각화] 총 " + features.size() + "개의 GeoJSON 데이터를 프론트엔드로 전송합니다.");
 
         return features;
+    }
+    
+    public ResponseEntity<Resource> downloadDatasetFile(Long datasetId) {
+        // 1. 매퍼를 통해 S3에 저장된 물리적인 파일명 추출
+        String storedFilename = datasetMapper.selectStoredFilenameByDatasetId(datasetId);
+        if (storedFilename == null || storedFilename.isEmpty()) {
+            throw new RuntimeException("다운로드할 파일 정보가 존재하지 않습니다.");
+        }
+        
+        // 2. 관리자가 심사 중(REQUEST)인 파일은 무조건 tempFiles에 보관되어 있습니다.
+        S3DownloadResult result = s3FileService.downloadFile("tempFiles", storedFilename, null);
+        
+        // 3. 🚀 record 타입에 맞춰 정확한 변수명(contentType(), fileName(), resource())으로 호출!
+        return ResponseEntity.ok()
+                .contentType(org.springframework.http.MediaType.parseMediaType(result.contentType()))
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + java.net.URLEncoder.encode(result.fileName(), java.nio.charset.StandardCharsets.UTF_8) + "\"")
+                .body(result.resource());
     }
 
 }
