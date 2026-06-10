@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hub.gisdatahub.board.dto.GeoCodeResponse;
 import com.hub.gisdatahub.board.dto.LocationSearchResponse;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -15,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+@Profile("legacy-location")
 @Service
 public class LocationServiceImpl implements LocationService {
 

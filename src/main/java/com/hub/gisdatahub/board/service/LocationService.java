@@ -5,6 +5,9 @@ import com.hub.gisdatahub.board.dto.LocationSearchResponse;
 
 import java.util.List;
 
+import org.springframework.context.annotation.Profile;
+
+@Profile("legacy-location")
 public interface LocationService {
 
     public GeoCodeResponse geocode(String address);
