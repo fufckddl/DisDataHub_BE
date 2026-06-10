@@ -85,4 +85,17 @@ public class AdminUserController {
 
         return response;
     }
+
+    @GetMapping("userManagementLogList")
+    public Map<String, Object> userManagementLogList() {
+        Map<String, Object> response = new HashMap<>();
+
+        List<UserManagementLogDto> userManagementLogList =
+            adminUserService.getUserManagementLogList();
+
+        response.put("userManagementLogList", userManagementLogList);
+        response.put("result", "success");
+
+        return response;
+    }
 }

@@ -119,7 +119,7 @@ public class SecurityConfig {
                 )
                 .cors(cors -> cors.configurationSource(request -> {
                     CorsConfiguration config = new CorsConfiguration();
-                    config.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:5174","http://localhost:5175","http://localhost:5176", "http://localhost:5177"));
+                    config.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:5174","http://localhost:5175","http://localhost:5176", "http://localhost:5177", "https://gisdatahub.ulb-cf-proxy.link"));
                     config.setAllowedMethods(List.of("*"));
                     config.setAllowedHeaders(List.of("*"));
                     config.setAllowCredentials(true);

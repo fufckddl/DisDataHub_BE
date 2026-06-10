@@ -59,4 +59,23 @@
         ORDER BY setting_id ASC
     </select>
 
+    <select id="findSystemSettingConfigLogList"
+            resultType="com.hub.gisdatahub.admin.dto.SystemSettingConfigLogDto">
+
+        SELECT
+            sscl.log_id AS logId,
+            sscl.admin_user_id AS adminUserId,
+            sscl.setting_key AS settingKey,
+            sscl.before_value AS beforeValue,
+            sscl.after_value AS afterValue,
+            sscl.description AS description,
+            sscl.created_at AS createdAt,
+            su.username AS adminUsername
+        FROM sd_system_setting_config_log sscl
+        LEFT JOIN sd_user su
+            ON sscl.admin_user_id = su.user_id
+        ORDER BY sscl.log_id DESC
+
+    </select>
+
 </mapper>

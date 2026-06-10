@@ -37,4 +37,9 @@ public class SystemSettingServiceImpl implements SystemSettingService {
     public List<SystemSettingDto> getSystemSettingList() {
         return systemSettingMapper.findSystemSettingAll();
     }
+
+    @Override
+    public List<SystemSettingConfigLogDto> getSystemSettingConfigLogList() {
+        return systemSettingMapper.findSystemSettingConfigLogList();
+    }
 }
