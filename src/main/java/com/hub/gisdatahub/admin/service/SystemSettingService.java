@@ -9,4 +9,5 @@ public interface SystemSettingService {
     
     public void updateSystemSetting(SystemSettingConfigLogDto systemSettingConfigLogDto);
     public List<SystemSettingDto> getSystemSettingList();
+    public List<SystemSettingConfigLogDto> getSystemSettingConfigLogList();
 }

@@ -11,4 +11,5 @@ public class SystemSettingConfigLogDto {
     private String afterValue;
     private String description;
     private String createdAt;
+    private String adminUsername;
 }
