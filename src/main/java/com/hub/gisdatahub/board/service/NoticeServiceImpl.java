@@ -1,9 +1,12 @@
 package com.hub.gisdatahub.board.service;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.hub.gisdatahub.board.dto.BoardPostDto;
 import com.hub.gisdatahub.board.mapper.NoticeSqlMapper;
@@ -95,5 +98,23 @@ public class NoticeServiceImpl implements NoticeService {
         if (deleteCount == 0) {
             throw new RuntimeException("삭제할 공지사항을 찾을 수 없습니다.");
         }
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> restoreNoticePost(Long postId) {
+        Map<String, Object> resultMap = new HashMap<>();
+
+        int result = noticeSqlMapper.restoreNoticePost(postId);
+
+        if (result > 0) {
+            resultMap.put("result", "success");
+            resultMap.put("message", "공지사항 삭제가 취소되었습니다.");
+        } else {
+            resultMap.put("result", "fail");
+            resultMap.put("message", "삭제 취소할 공지사항이 없습니다.");
+        }
+
+        return resultMap;
     }
 }

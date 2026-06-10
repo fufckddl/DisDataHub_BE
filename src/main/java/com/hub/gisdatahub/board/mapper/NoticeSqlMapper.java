@@ -3,6 +3,7 @@ package com.hub.gisdatahub.board.mapper;
 import java.util.List;
 
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 
 import com.hub.gisdatahub.board.dto.BoardPostDto;
 
@@ -44,4 +45,7 @@ public interface NoticeSqlMapper {
 
     // 조회수 증가
     public int increaseNoticeViewCount(Long postId);
+
+    // 삭제 취소
+    public int restoreNoticePost(Long postId);
 }
