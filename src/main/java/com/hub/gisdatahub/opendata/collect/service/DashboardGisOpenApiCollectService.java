@@ -1,8 +1,17 @@
 package com.hub.gisdatahub.opendata.collect.service;
 
-import java.math.BigDecimal;
-import java.io.IOException;
 import java.io.ByteArrayInputStream;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.math.BigDecimal;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.URLDecoder;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -22,6 +31,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.core.env.Environment;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -34,6 +45,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.hub.gisdatahub.opendata.collect.client.DataCollectClient;
+import com.opencsv.CSVReader;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -52,6 +64,8 @@ public class DashboardGisOpenApiCollectService {
     private static final int DEFAULT_NUM_OF_ROWS = 5;
     private static final int MAX_NUM_OF_ROWS = 100;
     private static final int MAX_PAGE_GUARD = 1000;
+    private static final int STANDARD_FEATURE_PAGE_SIZE = 100;
+    private static final int OPEN_API_PAGE_RETRY_COUNT = 3;
     private static final String SEOUL_SIDO_AREA_CODE = "1100000000";
     private static final String SEOUL_SIDO_CODE = "11";
     private static final String EV_CHARGER_COUNT_METRIC_CODE = "EV_CHARGER_COUNT";
@@ -61,12 +75,16 @@ public class DashboardGisOpenApiCollectService {
     private static final Duration MOIS_DASHBOARD_READ_TIMEOUT = Duration.ofSeconds(30);
     private static final int EV_CHARGER_STATS_FAILURE_BREAK_COUNT = 3;
     private static final String MOIS_LEGAL_DONG_AREA_LEVEL = "LEGAL_DONG";
+    private static final String STANDARD_BUS_STOP_FILE_URL = "https://www.data.go.kr/cmm/cmm/fileDownload.do?atchFileId=FILE_000000003558143&fileDetailSn=1&insertDataPrcus=N";
+    private static final Charset DATA_GO_KR_FILE_CHARSET = Charset.forName("MS949");
+    private static final int FILE_FEATURE_BATCH_SIZE = 1000;
 
     private final DataCollectClient dataCollectClient;
     private final NamedParameterJdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final Environment environment;
     private final DashboardGisObservationSyncService dashboardGisObservationSyncService;
+    private final Set<String> ensuredStandardSplitTables = ConcurrentHashMap.newKeySet();
 
     public DashboardGisOpenApiCollectService(
             DataCollectClient dataCollectClient,
@@ -81,7 +99,6 @@ public class DashboardGisOpenApiCollectService {
         this.dashboardGisObservationSyncService = dashboardGisObservationSyncService;
     }
 
-    @Transactional
     public Map<String, Object> collect(
             String sourceCode,
             Integer pageNo,
@@ -278,10 +295,19 @@ public class DashboardGisOpenApiCollectService {
         if (spec == SourceSpec.KMA_VILAGE_FCST_MAIN) {
             return collectKmaSigunguWeather(spec, keyword);
         }
+        if (spec == SourceSpec.STANDARD_BUS_STOP_MAIN) {
+            return collectStandardBusStopFile(spec);
+        }
         if (spec.blockerReason() != null && !spec.blockerReason().isBlank()) {
             long runId = startRun(spec, requestParams(spec, pageNo, numOfRows, statsYm, keyword));
             finishRun(runId, "SKIPPED", 0, 0, 1, spec.blockerReason());
             return result(spec, "SKIPPED", 0, 0, spec.blockerReason());
+        }
+        if (spec.storageType() == StorageType.FEATURE && standardSplitFeatureTable(spec.datasetCode()) == null) {
+            long runId = startRun(spec, requestParams(spec, pageNo, numOfRows, statsYm, keyword));
+            String blocker = "dedicated feature table is not configured";
+            finishRun(runId, "SKIPPED", 0, 0, 1, blocker);
+            return result(spec, "SKIPPED", 0, 0, blocker);
         }
         if (shouldCollectAllFeaturePages(spec)) {
             return collectAllFeaturePages(spec, pageNo, statsYm, keyword);
@@ -312,7 +338,7 @@ public class DashboardGisOpenApiCollectService {
 
     private Map<String, Object> collectAllFeaturePages(SourceSpec spec, int startPageNo, String statsYm, String keyword) {
         int pageNo = Math.max(startPageNo, DEFAULT_PAGE_NO);
-        int numOfRows = MAX_NUM_OF_ROWS;
+        int numOfRows = featurePageSize(spec);
         Map<String, Object> initialParams = requestParams(spec, pageNo, numOfRows, statsYm, keyword);
         initialParams.put("collectionMode", "ALL_PAGES");
         String missingKey = ensureAuthParams(spec, initialParams);
@@ -324,6 +350,7 @@ public class DashboardGisOpenApiCollectService {
         }
 
         long runId = startRun(spec, initialParams);
+        deleteExistingFeaturesForFullRefresh(spec);
         int fetched = 0;
         int saved = 0;
         int failed = 0;
@@ -334,8 +361,12 @@ public class DashboardGisOpenApiCollectService {
         while (hasNextPage && pageNo < startPageNo + MAX_PAGE_GUARD) {
             Map<String, Object> queryParams = requestParams(spec, pageNo, numOfRows, statsYm, keyword);
             try {
-                String body = dataCollectClient.callOpenApi(spec.baseUrl(), spec.path(), queryParams);
-                SaveResult saveResult = saveResponse(runId, spec, body);
+                String pageMissingKey = ensureAuthParams(spec, queryParams);
+                if (pageMissingKey != null) {
+                    throw new IllegalStateException("missing API key: " + pageMissingKey);
+                }
+                String body = callOpenApiWithRetry(spec, queryParams);
+                SaveResult saveResult = saveResponse(runId, spec, body, true);
                 fetched += saveResult.fetchedCount();
                 saved += saveResult.savedCount();
                 lastPageNo = pageNo;
@@ -362,10 +393,200 @@ public class DashboardGisOpenApiCollectService {
                         : lastError);
     }
 
+    private Map<String, Object> collectStandardBusStopFile(SourceSpec spec) {
+        Map<String, Object> runParams = new LinkedHashMap<>();
+        runParams.put("collectionMode", "FILE_DATA");
+        runParams.put("fileDataId", "15067528");
+        runParams.put("source", "data.go.kr");
+        runParams.put("url", STANDARD_BUS_STOP_FILE_URL);
+
+        long runId = startRun(spec, runParams);
+        deleteExistingFeaturesForFullRefresh(spec);
+        int fetched = 0;
+        int saved = 0;
+        int failed = 0;
+        String lastError = null;
+        List<JsonNode> batch = new ArrayList<>(FILE_FEATURE_BATCH_SIZE);
+        Path csvFile = null;
+
+        try {
+            csvFile = downloadStandardBusStopFile();
+            try (InputStream inputStream = Files.newInputStream(csvFile);
+                 CSVReader reader = new CSVReader(new BufferedReader(new InputStreamReader(inputStream, DATA_GO_KR_FILE_CHARSET)))) {
+                String[] headers = reader.readNext();
+                if (headers == null || headers.length == 0) {
+                    throw new IllegalStateException("empty bus stop csv header");
+                }
+                Map<String, Integer> columns = csvColumns(headers);
+                String[] row;
+                while ((row = reader.readNext()) != null) {
+                    fetched++;
+                    batch.add(standardBusStopRow(columns, row));
+                    if (batch.size() >= FILE_FEATURE_BATCH_SIZE) {
+                        saved += insertFeatures(runId, spec, batch, true);
+                        batch.clear();
+                    }
+                }
+                if (!batch.isEmpty()) {
+                    saved += insertFeatures(runId, spec, batch, true);
+                    batch.clear();
+                }
+            }
+        } catch (Exception exception) {
+            failed = 1;
+            lastError = exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
+        } finally {
+            if (csvFile != null) {
+                try {
+                    Files.deleteIfExists(csvFile);
+                } catch (IOException ignored) {
+                    // Temporary collection file cleanup failure is non-fatal.
+                }
+            }
+        }
+
+        String runStatus = saved > 0 ? (failed > 0 ? "PARTIAL" : "SUCCEEDED") : failed > 0 ? "FAILED" : "SKIPPED";
+        String status = saved > 0 ? (failed > 0 ? "PARTIAL" : "COMPLETED") : failed > 0 ? "FAILED" : "NO_DATA";
+        finishRun(runId, runStatus, fetched, saved, failed, lastError);
+        return result(spec, status, fetched, saved,
+                lastError == null
+                        ? "bus stop file rows collected: " + fetched
+                        : lastError);
+    }
+
+    private Path downloadStandardBusStopFile() throws IOException, InterruptedException {
+        Path tempFile = Files.createTempFile("standard-bus-stop-", ".csv");
+        HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .build();
+        HttpRequest request = HttpRequest.newBuilder(URI.create(STANDARD_BUS_STOP_FILE_URL))
+                .timeout(Duration.ofMinutes(5))
+                .header("User-Agent", "GisDataHub/1.0")
+                .GET()
+                .build();
+        try {
+            HttpResponse<Path> response = client.send(request, HttpResponse.BodyHandlers.ofFile(tempFile));
+            int statusCode = response.statusCode();
+            if (statusCode >= 200 && statusCode < 300 && Files.size(tempFile) > 0) {
+                return tempFile;
+            }
+            Files.deleteIfExists(tempFile);
+            throw new IllegalStateException("bus stop file download failed: HTTP " + statusCode);
+        } catch (IOException | RuntimeException exception) {
+            Files.deleteIfExists(tempFile);
+            return downloadStandardBusStopFileWithCurl(exception);
+        }
+    }
+
+    private Path downloadStandardBusStopFileWithCurl(Exception cause) throws IOException, InterruptedException {
+        Path tempFile = Files.createTempFile("standard-bus-stop-", ".csv");
+        Process process = new ProcessBuilder(
+                "curl",
+                "-fsSL",
+                "--retry", "3",
+                "--connect-timeout", "10",
+                "--max-time", "300",
+                "-o", tempFile.toString(),
+                STANDARD_BUS_STOP_FILE_URL)
+                .start();
+        int exitCode = process.waitFor();
+        if (exitCode == 0 && Files.size(tempFile) > 0) {
+            return tempFile;
+        }
+        String error = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+        Files.deleteIfExists(tempFile);
+        throw new IllegalStateException("bus stop file download failed with curl: " + error, cause);
+    }
+
+    private Map<String, Integer> csvColumns(String[] headers) {
+        Map<String, Integer> columns = new LinkedHashMap<>();
+        for (int i = 0; i < headers.length; i++) {
+            String header = headers[i] == null ? "" : headers[i].replace("\uFEFF", "").trim();
+            if (!header.isBlank()) {
+                columns.put(header, i);
+            }
+        }
+        return columns;
+    }
+
+    private JsonNode standardBusStopRow(Map<String, Integer> columns, String[] row) {
+        String nodeId = csvValue(columns, row, "정류장번호");
+        String nodeName = csvValue(columns, row, "정류장명");
+        String latitude = csvValue(columns, row, "위도");
+        String longitude = csvValue(columns, row, "경도");
+        String collectedTime = csvValue(columns, row, "정보수집일");
+        String mobileId = csvValue(columns, row, "모바일단축번호");
+        String cityCode = csvValue(columns, row, "도시코드");
+        String cityName = csvValue(columns, row, "도시명");
+        String adminName = csvValue(columns, row, "관리도시명");
+
+        ObjectNode node = objectMapper.createObjectNode();
+        node.put("정류장번호", nodeId);
+        node.put("정류장명", nodeName);
+        node.put("위도", latitude);
+        node.put("경도", longitude);
+        node.put("정보수집일", collectedTime);
+        node.put("모바일단축번호", mobileId);
+        node.put("도시코드", cityCode);
+        node.put("도시명", cityName);
+        node.put("관리도시명", adminName);
+        node.put("NODE_ID", nodeId);
+        node.put("NODE_NM", nodeName);
+        node.put("GPS_LATI", latitude);
+        node.put("GPS_LONG", longitude);
+        node.put("COLLECTD_TIME", collectedTime);
+        node.put("NODE_MOBILE_ID", mobileId);
+        node.put("CITY_CD", cityCode);
+        node.put("CITY_NAME", cityName);
+        node.put("ADMIN_NM", adminName);
+        node.put("featureCategory", "BUS_STOP");
+        return node;
+    }
+
+    private String csvValue(Map<String, Integer> columns, String[] row, String column) {
+        Integer index = columns.get(column);
+        if (index == null || index < 0 || index >= row.length || row[index] == null) {
+            return "";
+        }
+        return row[index].trim();
+    }
+
     private boolean shouldCollectAllFeaturePages(SourceSpec spec) {
         return spec.storageType() == StorageType.FEATURE
                 && spec != SourceSpec.KECO_EV_CHARGER_MAIN
                 && spec != SourceSpec.JUSO_SEARCH_API_MAIN;
+    }
+
+    private String callOpenApiWithRetry(SourceSpec spec, Map<String, Object> queryParams) {
+        RuntimeException lastException = null;
+        for (int attempt = 1; attempt <= OPEN_API_PAGE_RETRY_COUNT; attempt++) {
+            try {
+                return dataCollectClient.callOpenApi(spec.baseUrl(), spec.path(), queryParams);
+            } catch (RuntimeException exception) {
+                lastException = exception;
+                if (attempt < OPEN_API_PAGE_RETRY_COUNT) {
+                    sleepBeforeRetry(attempt);
+                }
+            }
+        }
+        throw lastException == null ? new IllegalStateException("OpenAPI request failed") : lastException;
+    }
+
+    private void sleepBeforeRetry(int attempt) {
+        try {
+            Thread.sleep(500L * attempt);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("OpenAPI retry interrupted", exception);
+        }
+    }
+
+    private int featurePageSize(SourceSpec spec) {
+        return isStandardSplitFeatureSpec(spec) ? STANDARD_FEATURE_PAGE_SIZE : MAX_NUM_OF_ROWS;
+    }
+
+    private boolean isStandardSplitFeatureSpec(SourceSpec spec) {
+        return standardSplitFeatureTable(spec.datasetCode()) != null;
     }
 
     private Map<String, Object> syncExistingResidentPopulation(SourceSpec spec, String statsYm) {
@@ -831,6 +1052,10 @@ public class DashboardGisOpenApiCollectService {
     }
 
     private SaveResult saveResponse(long runId, SourceSpec spec, String body) throws JsonProcessingException {
+        return saveResponse(runId, spec, body, false);
+    }
+
+    private SaveResult saveResponse(long runId, SourceSpec spec, String body, boolean fullRefresh) throws JsonProcessingException {
         if (body == null || body.isBlank()) {
             return new SaveResult(0, 0, "empty response");
         }
@@ -847,18 +1072,21 @@ public class DashboardGisOpenApiCollectService {
             List<JsonNode> xmlRows = readXmlRows(body);
             if (!xmlRows.isEmpty()) {
                 List<JsonNode> observationRows = new ArrayList<>();
+                List<JsonNode> featureRows = new ArrayList<>();
                 int saved = 0;
                 for (JsonNode row : xmlRows) {
                     if (shouldSkipObservation(spec, row)) {
                         continue;
                     }
                     if (spec.storageType() == StorageType.FEATURE) {
-                        saved += insertFeature(runId, spec, row);
+                        featureRows.add(row);
                     } else {
                         observationRows.add(row);
                     }
                 }
-                if (spec.storageType() != StorageType.FEATURE) {
+                if (spec.storageType() == StorageType.FEATURE) {
+                    saved += insertFeatures(runId, spec, featureRows, fullRefresh);
+                } else {
                     saved += insertObservations(runId, spec, observationRows);
                 }
                 return new SaveResult(xmlRows.size(), saved, "parsed xml rows saved");
@@ -883,17 +1111,20 @@ public class DashboardGisOpenApiCollectService {
         }
 
         List<JsonNode> observationRows = new ArrayList<>();
+        List<JsonNode> featureRows = new ArrayList<>();
         for (JsonNode row : rows) {
             if (shouldSkipObservation(spec, row)) {
                 continue;
             }
             if (spec.storageType() == StorageType.FEATURE) {
-                saved += insertFeature(runId, spec, row);
+                featureRows.add(row);
             } else {
                 observationRows.add(row);
             }
         }
-        if (spec.storageType() != StorageType.FEATURE) {
+        if (spec.storageType() == StorageType.FEATURE) {
+            saved += insertFeatures(runId, spec, featureRows, fullRefresh);
+        } else {
             saved += insertObservations(runId, spec, observationRows);
         }
         return new SaveResult(rows.size(), saved, "parsed rows saved");
@@ -965,8 +1196,106 @@ public class DashboardGisOpenApiCollectService {
     }
 
     private int insertFeature(long runId, SourceSpec spec, JsonNode row) throws JsonProcessingException {
-        String sql = """
-                INSERT INTO public.sd_dashboard_geo_feature (
+        return insertFeature(runId, spec, row, false);
+    }
+
+    private int insertFeature(long runId, SourceSpec spec, JsonNode row, boolean fullRefresh) throws JsonProcessingException {
+        MapSqlParameterSource params = featureParams(runId, spec, row, metricCode(spec.datasetCode()));
+        if (params == null) {
+            return 0;
+        }
+        String standardTable = standardSplitFeatureTable(spec.datasetCode());
+        if (standardTable != null) {
+            ensureStandardSplitFeatureTable(standardTable);
+            if (!fullRefresh) {
+                deleteExistingFeature(standardTable, params);
+            }
+            return jdbcTemplate.update(featureInsertSql(standardTable), params);
+        }
+
+        return 0;
+    }
+
+    private int insertFeatures(long runId, SourceSpec spec, List<JsonNode> rows, boolean fullRefresh) throws JsonProcessingException {
+        if (rows.isEmpty()) {
+            return 0;
+        }
+        String metricCode = metricCode(spec.datasetCode());
+        List<MapSqlParameterSource> params = new ArrayList<>();
+        for (JsonNode row : rows) {
+            MapSqlParameterSource rowParams = featureParams(runId, spec, row, metricCode);
+            if (rowParams == null) {
+                continue;
+            }
+            params.add(rowParams);
+        }
+        if (params.isEmpty()) {
+            return 0;
+        }
+
+        String standardTable = standardSplitFeatureTable(spec.datasetCode());
+        if (standardTable != null) {
+            ensureStandardSplitFeatureTable(standardTable);
+            if (!fullRefresh) {
+                for (MapSqlParameterSource rowParams : params) {
+                    deleteExistingFeature(standardTable, rowParams);
+                }
+            }
+            return sumBatchCounts(jdbcTemplate.batchUpdate(
+                    featureInsertSql(standardTable),
+                    params.toArray(MapSqlParameterSource[]::new)));
+        }
+
+        return 0;
+    }
+
+    private int sumBatchCounts(int[] counts) {
+        int saved = 0;
+        for (int count : counts) {
+            if (count > 0) {
+                saved += count;
+            } else if (count == Statement.SUCCESS_NO_INFO) {
+                saved++;
+            }
+        }
+        return saved;
+    }
+
+    private MapSqlParameterSource featureParams(long runId, SourceSpec spec, JsonNode row, String metricCode) throws JsonProcessingException {
+        BigDecimal longitude = firstDecimal(row, "longitude", "lon", "lng", "mapx", "mapX", "gpsX", "gpsx", "gpsLong", "GPS_LONG", "gps_long", "경도", "lo", "x", "LONGITUDE", "LON", "LNG");
+        BigDecimal latitude = firstDecimal(row, "latitude", "lat", "mapy", "mapY", "gpsY", "gpsy", "gpsLati", "GPS_LATI", "gps_lati", "위도", "la", "y", "LATITUDE", "LAT");
+        if (longitude == null || latitude == null) {
+            return null;
+        }
+        String externalId = featureExternalId(row, spec);
+        if (externalId.isBlank()) {
+            externalId = spec.datasetCode() + ':' + hash(row.toString());
+        }
+        return new MapSqlParameterSource()
+                .addValue("datasetCode", spec.datasetCode())
+                .addValue("metricCode", metricCode)
+                .addValue("runId", runId)
+                .addValue("externalId", externalId)
+                .addValue("featureName", blankToNull(firstText(row, "name", "title", "featureName", "bizesNm", "statNm", "csNm", "fcltyNm", "시설명", "상호명", "관광지명", "schoolNm", "LBRRY_NM", "lbrryNm", "parkNm", "prkplceNm", "nodenm", "nodeNm", "node_nm", "NODE_NM", "정류장명", "stopNm", "stationNm", "busStopNm")))
+                .addValue("featureCategory", blankToNull(firstText(row, "category", "featureCategory", "contenttypeid", "indsSclsNm", "chgerType", "busiNm", "fcltyType", "type", "구분", "lbrrySe", "parkSe")))
+                .addValue("sourceAreaCode", blankToNull(firstText(row, "areaCode", "areacode", "sigungucode", "ctprvnCd", "signguCd", "adongCd", "bjd_cd", "zscode", "zcode", "sidoCd", "sggCd", "cityCd", "city_cd", "CITY_CD", "도시코드")))
+                .addValue("sourceAreaName", blankToNull(firstText(row, "areaName", "addr1", "ctprvnNm", "signguNm", "sido_sgg_nm", "institutionNm", "instt_nm", "insttNm", "zcodeNm", "zscodeNm", "sidoNm", "sggNm", "emdNm", "cityName", "city_name", "CITY_NAME", "adminNm", "admin_nm", "ADMIN_NM", "도시명", "관리도시명")))
+                .addValue("address", blankToNull(firstText(row, "addr", "addr1", "address", "lnmadr", "lnoAdr", "LCTN_LOTNO_ADDR", "소재지주소")))
+                .addValue("roadAddress", blankToNull(firstText(row, "roadAddress", "rdnmadr", "rdnmAdr", "LCTN_ROAD_NM_ADDR", "도로명주소")))
+                .addValue("longitude", longitude)
+                .addValue("latitude", latitude)
+                .addValue("sourceCrs", "EPSG:4326")
+                .addValue("numericValue", firstDecimal(row, "value", "count", "cnt", "CAPA", "ar", "parkAr", "parkingchrgeInfo", "seatCo", "bookCo"))
+                .addValue("textValue", null)
+                .addValue("jsonValue", row.toString())
+                .addValue("unit", null)
+                .addValue("dimensions", json(Map.of("collector", "dashboard-gis", "sourceCode", spec.sourceCode())))
+                .addValue("rawPayload", row.toString());
+    }
+
+    private String featureInsertSql(String tableName) {
+        return """
+                INSERT INTO __FEATURE_TABLE__ (
                     dataset_code, metric_code, collection_run_id, external_id, feature_name, feature_category,
                     source_area_code, source_area_name, address, road_address, longitude, latitude, source_crs,
                     geom, base_date, observed_at, numeric_value, text_value, json_value, unit, dimensions,
@@ -981,58 +1310,130 @@ public class DashboardGisOpenApiCollectService {
                     CURRENT_DATE, CURRENT_TIMESTAMP, :numericValue, :textValue, CAST(:jsonValue AS jsonb), :unit,
                     CAST(:dimensions AS jsonb), CAST(:rawPayload AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 ) ON CONFLICT DO NOTHING
-                """;
-        BigDecimal longitude = firstDecimal(row, "longitude", "lon", "lng", "mapx", "mapX", "경도", "lo", "x", "LONGITUDE", "LON", "LNG");
-        BigDecimal latitude = firstDecimal(row, "latitude", "lat", "mapy", "mapY", "위도", "la", "y", "LATITUDE", "LAT");
-        if (longitude == null || latitude == null) {
-            return 0;
-        }
-        String externalId = featureExternalId(row, spec);
-        if (externalId.isBlank()) {
-            externalId = spec.datasetCode() + ':' + hash(row.toString());
-        }
-        MapSqlParameterSource params = new MapSqlParameterSource()
-                .addValue("datasetCode", spec.datasetCode())
-                .addValue("metricCode", metricCode(spec.datasetCode()))
-                .addValue("runId", runId)
-                .addValue("externalId", externalId)
-                .addValue("featureName", blankToNull(firstText(row, "name", "title", "featureName", "bizesNm", "statNm", "csNm", "fcltyNm", "시설명", "상호명", "관광지명", "schoolNm", "LBRRY_NM", "lbrryNm", "prkplceNm", "nodenm")))
-                .addValue("featureCategory", blankToNull(firstText(row, "category", "contenttypeid", "indsSclsNm", "chgerType", "busiNm", "fcltyType", "type", "구분", "lbrrySe")))
-                .addValue("sourceAreaCode", blankToNull(firstText(row, "areaCode", "areacode", "sigungucode", "ctprvnCd", "signguCd", "adongCd", "bjd_cd", "zscode", "zcode")))
-                .addValue("sourceAreaName", blankToNull(firstText(row, "areaName", "addr1", "ctprvnNm", "signguNm", "sido_sgg_nm", "institutionNm", "instt_nm", "insttNm", "zcodeNm", "zscodeNm")))
-                .addValue("address", blankToNull(firstText(row, "addr", "addr1", "address", "lnmadr", "lnoAdr", "LCTN_LOTNO_ADDR", "소재지주소")))
-                .addValue("roadAddress", blankToNull(firstText(row, "roadAddress", "rdnmadr", "rdnmAdr", "LCTN_ROAD_NM_ADDR", "도로명주소")))
-                .addValue("longitude", longitude)
-                .addValue("latitude", latitude)
-                .addValue("sourceCrs", "EPSG:4326")
-                .addValue("numericValue", firstDecimal(row, "value", "count", "cnt", "CAPA", "ar", "parkingchrgeInfo", "seatCo", "bookCo"))
-                .addValue("textValue", null)
-                .addValue("jsonValue", row.toString())
-                .addValue("unit", null)
-                .addValue("dimensions", json(Map.of("collector", "dashboard-gis", "sourceCode", spec.sourceCode())))
-                .addValue("rawPayload", row.toString());
-        deleteExistingFeature(params);
-        return jdbcTemplate.update(sql, params);
+                """.replace("__FEATURE_TABLE__", tableName);
     }
 
-    private void deleteExistingFeature(MapSqlParameterSource params) {
+    private void deleteExistingFeature(String tableName, MapSqlParameterSource params) {
         String externalId = (String) params.getValue("externalId");
         if (externalId == null || externalId.isBlank()) {
             return;
         }
         String sql = """
-                DELETE FROM public.sd_dashboard_geo_feature
+                DELETE FROM __FEATURE_TABLE__
                 WHERE dataset_code = :datasetCode
                   AND metric_code IS NOT DISTINCT FROM :metricCode
                   AND external_id = :externalId
-                """;
+                """.replace("__FEATURE_TABLE__", tableName);
         jdbcTemplate.update(sql, params);
     }
 
+    private void deleteExistingFeaturesForFullRefresh(SourceSpec spec) {
+        MapSqlParameterSource params = new MapSqlParameterSource("datasetCode", spec.datasetCode());
+        String standardTable = standardSplitFeatureTable(spec.datasetCode());
+        if (standardTable != null) {
+            ensureStandardSplitFeatureTable(standardTable);
+            jdbcTemplate.update("DELETE FROM " + standardTable + " WHERE dataset_code = :datasetCode", params);
+        }
+    }
+
+    private void ensureStandardSplitFeatureTable(String tableName) {
+        if (!ensuredStandardSplitTables.add(tableName)) {
+            return;
+        }
+        String sql = String.format("""
+                CREATE TABLE IF NOT EXISTS %s (
+                    geo_feature_id BIGSERIAL PRIMARY KEY,
+                    dataset_code VARCHAR(120) NOT NULL,
+                    metric_code VARCHAR(120),
+                    collection_run_id BIGINT,
+                    external_id VARCHAR(180),
+                    feature_name VARCHAR(300),
+                    feature_category VARCHAR(160),
+                    area_code VARCHAR(20),
+                    source_area_code VARCHAR(100),
+                    source_area_name VARCHAR(240),
+                    address TEXT,
+                    road_address TEXT,
+                    longitude NUMERIC(11, 8),
+                    latitude NUMERIC(11, 8),
+                    source_x NUMERIC(20, 8),
+                    source_y NUMERIC(20, 8),
+                    source_crs VARCHAR(80),
+                    geom GEOMETRY(GEOMETRY, 4326),
+                    base_date DATE,
+                    base_hour VARCHAR(2),
+                    observed_at TIMESTAMP,
+                    valid_from TIMESTAMP,
+                    valid_to TIMESTAMP,
+                    numeric_value NUMERIC(20, 6),
+                    text_value TEXT,
+                    json_value JSONB,
+                    unit VARCHAR(60),
+                    status_code VARCHAR(100),
+                    status_name VARCHAR(200),
+                    dimensions JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    raw_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """, tableName);
+        jdbcTemplate.getJdbcTemplate().execute(sql);
+        jdbcTemplate.getJdbcTemplate().execute("CREATE UNIQUE INDEX IF NOT EXISTS "
+                + standardSplitUniqueIndexName(tableName)
+                + " ON " + tableName
+                + " (dataset_code, COALESCE(metric_code, ''), COALESCE(external_id, ''))");
+        jdbcTemplate.getJdbcTemplate().execute("CREATE INDEX IF NOT EXISTS "
+                + standardSplitGeomIndexName(tableName)
+                + " ON " + tableName + " USING GIST (geom)");
+        jdbcTemplate.getJdbcTemplate().execute("CREATE INDEX IF NOT EXISTS "
+                + standardSplitLonLatIndexName(tableName)
+                + " ON " + tableName + " (longitude, latitude)");
+        jdbcTemplate.getJdbcTemplate().execute("CREATE SEQUENCE IF NOT EXISTS " + standardSplitSequenceName(tableName));
+        jdbcTemplate.getJdbcTemplate().execute("ALTER TABLE " + tableName
+                + " ALTER COLUMN geo_feature_id SET DEFAULT nextval('" + standardSplitSequenceName(tableName) + "'::regclass)");
+        jdbcTemplate.getJdbcTemplate().execute("SELECT setval('"
+                + standardSplitSequenceName(tableName)
+                + "', COALESCE((SELECT MAX(geo_feature_id) FROM " + tableName + "), 0) + 1, false)");
+        jdbcTemplate.getJdbcTemplate().execute("ALTER TABLE " + tableName
+                + " ALTER COLUMN longitude TYPE NUMERIC(11, 8)");
+        jdbcTemplate.getJdbcTemplate().execute("ALTER TABLE " + tableName
+                + " ALTER COLUMN latitude TYPE NUMERIC(11, 8)");
+    }
+
+    private String standardSplitFeatureTable(String datasetCode) {
+        return switch (datasetCode) {
+            case "STANDARD_LIBRARY_MAIN" -> "public.sd_dashboard_standard_library_feature";
+            case "STANDARD_URBAN_PARK_MAIN" -> "public.sd_dashboard_standard_urban_park_feature";
+            case "STANDARD_BUS_STOP_MAIN" -> "public.sd_dashboard_standard_bus_stop_feature";
+            default -> null;
+        };
+    }
+
+    private String standardSplitUniqueIndexName(String tableName) {
+        return tableName.replace("public.", "uk_").replace(".", "_") + "_source_key";
+    }
+
+    private String standardSplitGeomIndexName(String tableName) {
+        return tableName.replace("public.", "idx_").replace(".", "_") + "_geom";
+    }
+
+    private String standardSplitLonLatIndexName(String tableName) {
+        return tableName.replace("public.", "idx_").replace(".", "_") + "_lonlat";
+    }
+
+    private String standardSplitSequenceName(String tableName) {
+        return "public." + tableName.replace("public.", "").replace(".", "_") + "_geo_feature_id_seq";
+    }
+
     private int insertMetadataFeature(long runId, SourceSpec spec, String payload) throws JsonProcessingException {
+        String standardTable = standardSplitFeatureTable(spec.datasetCode());
+        if (standardTable == null) {
+            return 0;
+        }
+        ensureStandardSplitFeatureTable(standardTable);
         String externalId = spec.datasetCode() + ":metadata:" + hash(payload);
         String sql = """
-                INSERT INTO public.sd_dashboard_geo_feature (
+                INSERT INTO __FEATURE_TABLE__ (
                     dataset_code, metric_code, collection_run_id, external_id, feature_name, feature_category,
                     base_date, observed_at, text_value, json_value, dimensions, raw_payload, created_at, updated_at
                 ) VALUES (
@@ -1040,7 +1441,7 @@ public class DashboardGisOpenApiCollectService {
                     CURRENT_TIMESTAMP, :textValue, CAST(:jsonValue AS jsonb), CAST(:dimensions AS jsonb),
                     CAST(:rawPayload AS jsonb), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
                 ) ON CONFLICT DO NOTHING
-                """;
+                """.replace("__FEATURE_TABLE__", standardTable);
         String jsonPayload = json(Map.of("raw", abbreviate(payload)));
         return jdbcTemplate.update(sql, new MapSqlParameterSource()
                 .addValue("datasetCode", spec.datasetCode())
@@ -1672,9 +2073,24 @@ public class DashboardGisOpenApiCollectService {
             if (value.isBlank()) {
                 return authParam.envName();
             }
+            if (isApiDataGoKrStandardSpec(spec)) {
+                value = decodeUrlEncodedValue(value);
+            }
             params.put(authParam.paramName(), value);
         }
         return null;
+    }
+
+    private boolean isApiDataGoKrStandardSpec(SourceSpec spec) {
+        return "https://api.data.go.kr".equals(spec.baseUrl());
+    }
+
+    private String decodeUrlEncodedValue(String value) {
+        try {
+            return URLDecoder.decode(value, StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException exception) {
+            return value;
+        }
     }
 
     private long startRun(SourceSpec spec, Map<String, Object> params) {
@@ -1728,12 +2144,16 @@ public class DashboardGisOpenApiCollectService {
     }
 
     private Map<String, Object> countStoredRows(String datasetCode) {
+        String featureTable = standardSplitFeatureTable(datasetCode);
+        String featureCountSql = featureTable == null
+                ? "0::bigint"
+                : "(SELECT COUNT(*)::bigint FROM " + featureTable + " WHERE dataset_code = :datasetCode)";
         String sql = """
                 SELECT
                     (SELECT COUNT(*)::bigint FROM public.sd_dashboard_area_observation WHERE dataset_code = :datasetCode) AS observation_count,
-                    (SELECT COUNT(*)::bigint FROM public.sd_dashboard_geo_feature WHERE dataset_code = :datasetCode) AS feature_count,
+                    %s AS feature_count,
                     (SELECT COUNT(*)::bigint FROM public.sd_dashboard_layer_catalog WHERE dataset_code = :datasetCode) AS layer_count
-                """;
+                """.formatted(featureCountSql);
         return jdbcTemplate.queryForMap(sql, new MapSqlParameterSource("datasetCode", datasetCode));
     }
 
@@ -1994,11 +2414,11 @@ public class DashboardGisOpenApiCollectService {
     }
 
     private String configuredValue(String name) {
-        String value = directConfiguredValue(name);
+        String value = readDotenvValue(name);
         if (value != null && !value.isBlank()) {
             return value.trim();
         }
-        return "";
+        return directConfiguredValue(name);
     }
 
     private String directConfiguredValue(String name) {
@@ -2010,8 +2430,7 @@ public class DashboardGisOpenApiCollectService {
         if (value != null && !value.isBlank()) {
             return value.trim();
         }
-        value = readDotenvValue(name);
-        return value == null ? "" : value.trim();
+        return "";
     }
 
     private String replaceTokens(String value, String statsYm, String keyword) {
@@ -2023,7 +2442,7 @@ public class DashboardGisOpenApiCollectService {
     }
 
     private LocalDate baseDate(JsonNode row) {
-        String date = firstText(row, "baseDate", "base_date", "fcstDate", "tm", "dataTime", "statsYm");
+        String date = firstText(row, "baseDate", "base_date", "fcstDate", "tm", "dataTime", "statsYm", "collectdTime", "COLLECTD_TIME", "정보수집일");
         if (date.matches("\\d{4}-\\d{2}-\\d{2}.*")) {
             return LocalDate.parse(date.substring(0, 10));
         }
@@ -2089,7 +2508,8 @@ public class DashboardGisOpenApiCollectService {
         }
         return firstText(row,
                 "id", "ID", "contentid", "contentId", "bizesId", "statId", "statid", "chgerId", "csId",
-                "mngNo", "manageNo", "afos_fid", "spot_cd", "fcltyCd", "facilityId", "시설ID", "관리번호");
+                "mngNo", "manageNo", "afos_fid", "spot_cd", "fcltyCd", "facilityId", "nodeid", "nodeId", "node_id", "NODE_ID", "정류장번호",
+                "stopId", "busStopId", "stationId", "arsId", "시설ID", "관리번호");
     }
 
     private BigDecimal firstDecimal(JsonNode node, String... names) {
@@ -2335,7 +2755,7 @@ public class DashboardGisOpenApiCollectService {
 
     private enum StorageType {
         OBSERVATION("sd_dashboard_area_observation"),
-        FEATURE("sd_dashboard_geo_feature"),
+        FEATURE("dedicated_feature_table"),
         LAYER("sd_dashboard_layer_catalog");
 
         private final String table;
@@ -2383,7 +2803,7 @@ public class DashboardGisOpenApiCollectService {
         private static final SourceSpec MOLIT_TRAFFIC_FORECAST_MAIN = blocked("MOLIT_TRAFFIC_FORECAST", "MOLIT_TRAFFIC_FORECAST_MAIN", StorageType.OBSERVATION, null, "MOLIT_TRAFFIC_FORECAST_API_URL/API_KEY 및 도로 링크 파라미터가 필요합니다.");
         private static final SourceSpec SAFE_DISASTER_ALERT_MAIN = dataGo("SAFE_DISASTER_ALERT", "SAFE_DISASTER_ALERT_MAIN", StorageType.OBSERVATION, "SIGUNGU", "/1741000/DisasterMsg3/getDisasterMsg1List", p("type", "json"));
         private static final SourceSpec STANDARD_AED_MAIN = standard("STANDARD_AED", "STANDARD_AED_MAIN", StorageType.FEATURE, null, "/openapi/tn_pubr_public_automated_external_defibrillator_api", p("type", "json"));
-        private static final SourceSpec STANDARD_BUS_STOP_MAIN = dataGo("STANDARD_BUS_STOP", "STANDARD_BUS_STOP_MAIN", StorageType.FEATURE, null, "/1613000/BusSttnInfoInqireService/getCrdntPrxmtSttnList", p("_type", "json", "gpsLati", "37.5665", "gpsLong", "126.9780"));
+        private static final SourceSpec STANDARD_BUS_STOP_MAIN = dataGo("STANDARD_BUS_STOP", "STANDARD_BUS_STOP_MAIN", StorageType.FEATURE, null, "/1613000/BusStop/getBusStop", p("_type", "json"));
         private static final SourceSpec STANDARD_CHILD_PROTECTION_ZONE_MAIN = standard("STANDARD_CHILD_PROTECTION_ZONE", "STANDARD_CHILD_PROTECTION_ZONE_MAIN", StorageType.FEATURE, null, "/openapi/tn_pubr_public_child_prtc_area_api", p("type", "json"));
         private static final SourceSpec STANDARD_LIBRARY_MAIN = standard("STANDARD_LIBRARY", "STANDARD_LIBRARY_MAIN", StorageType.FEATURE, null, "/openapi/tn_pubr_public_lbrry_api", p("type", "json"));
         private static final SourceSpec STANDARD_PARKING_LOT_MAIN = standard("STANDARD_PARKING_LOT", "STANDARD_PARKING_LOT_MAIN", StorageType.FEATURE, null, "/openapi/tn_pubr_public_prkplce_info_api", p("type", "json"));
@@ -2457,6 +2877,15 @@ public class DashboardGisOpenApiCollectService {
         }
 
         String storageTable() {
+            String splitTable = switch (datasetCode) {
+                case "STANDARD_LIBRARY_MAIN" -> "sd_dashboard_standard_library_feature";
+                case "STANDARD_URBAN_PARK_MAIN" -> "sd_dashboard_standard_urban_park_feature";
+                case "STANDARD_BUS_STOP_MAIN" -> "sd_dashboard_standard_bus_stop_feature";
+                default -> null;
+            };
+            if (splitTable != null) {
+                return splitTable;
+            }
             return storageType.table;
         }
 

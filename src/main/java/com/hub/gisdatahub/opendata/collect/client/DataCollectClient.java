@@ -1,10 +1,17 @@
 package com.hub.gisdatahub.opendata.collect.client;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
@@ -141,18 +148,7 @@ public class DataCollectClient {
     }
 
     public String callOpenApi(String baseUrl, String path, Map<String, ?> queryParams) {
-        return RestClient.builder()
-                .baseUrl(baseUrl)
-                .requestFactory(moisRequestFactory())
-                .build()
-                .get()
-                .uri(uriBuilder -> {
-                    var builder = uriBuilder.path(path);
-                    queryParams.forEach(builder::queryParam);
-                    return builder.build();
-                })
-                .retrieve()
-                .body(String.class);
+        return callOpenApi(baseUrl, path, queryParams, MOIS_CONNECT_TIMEOUT, MOIS_READ_TIMEOUT);
     }
 
     public String callOpenApi(
@@ -161,18 +157,25 @@ public class DataCollectClient {
             Map<String, ?> queryParams,
             Duration connectTimeout,
             Duration readTimeout) {
-        return RestClient.builder()
-                .baseUrl(baseUrl)
-                .requestFactory(requestFactory(connectTimeout, readTimeout))
-                .build()
-                .get()
-                .uri(uriBuilder -> {
-                    var builder = uriBuilder.path(path);
-                    queryParams.forEach(builder::queryParam);
-                    return builder.build();
-                })
-                .retrieve()
-                .body(String.class);
+        try {
+            HttpClient httpClient = HttpClient.newBuilder()
+                    .connectTimeout(connectTimeout)
+                    .build();
+            HttpRequest request = HttpRequest.newBuilder(openApiUri(baseUrl, path, queryParams))
+                    .timeout(readTimeout)
+                    .GET()
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IllegalStateException("OpenAPI HTTP " + response.statusCode());
+            }
+            return response.body();
+        } catch (IOException exception) {
+            throw new IllegalStateException("OpenAPI request failed", exception);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("OpenAPI request interrupted", exception);
+        }
     }
 
     // 서울시 S-DoT 유동인구 측정 정보
@@ -262,5 +265,23 @@ public class DataCollectClient {
         requestFactory.setConnectTimeout(connectTimeout);
         requestFactory.setReadTimeout(readTimeout);
         return requestFactory;
+    }
+
+    private URI openApiUri(String baseUrl, String path, Map<String, ?> queryParams) {
+        String normalizedBaseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        String normalizedPath = path.startsWith("/") ? path : "/" + path;
+        String queryString = queryParams.entrySet().stream()
+                .filter(entry -> entry.getValue() != null)
+                .map(entry -> encodeQueryPart(entry.getKey()) + "=" + encodeQueryPart(entry.getValue()))
+                .collect(Collectors.joining("&"));
+        String uri = normalizedBaseUrl + normalizedPath;
+        if (!queryString.isBlank()) {
+            uri += "?" + queryString;
+        }
+        return URI.create(uri);
+    }
+
+    private String encodeQueryPart(Object value) {
+        return URLEncoder.encode(String.valueOf(value), StandardCharsets.UTF_8);
     }
 }
