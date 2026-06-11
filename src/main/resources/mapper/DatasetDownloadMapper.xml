@@ -58,6 +58,17 @@
         </if>
     </sql>
 
+    <sql id="todayDownloadedDatasetCondition">
+        and exists (
+            select 1
+            from sd_download_log dl
+            where dl.dataset_id = d.dataset_id
+                and dl.created_at &gt;= current_date
+                and dl.created_at &lt; current_date + interval '1 day'
+                and upper(coalesce(dl.download_status, 'SUCCESS')) = 'SUCCESS'
+        )
+    </sql>
+
     <sql id="approvedDatasetSortOrder">
         <choose>
             <when test="sort == 'viewCount'">
@@ -115,6 +126,47 @@
             resultType="java.lang.Integer">
         select count(distinct d.dataset_id)
         <include refid="approvedDatasetSearchFromWhere"/>
+    </select>
+
+    <select id="findTodayDownloadedApprovedDatasetPage"
+            resultType="com.hub.gisdatahub.download.dto.DownloadDatasetListItemDto">
+        select
+            d.dataset_id,
+            d.title,
+            d.description,
+            d.provider,
+            d.category_id,
+            c.category_name_ko,
+            d.is_public,
+            d.created_at,
+            f.file_extension,
+            coalesce(s.view_count, 0) as view_count,
+            coalesce(s.download_count, 0) as download_count,
+            <choose>
+                <when test="userId != null">
+                    exists (
+                    select 1
+                    from sd_dataset_favorite fav
+                    where fav.dataset_id = d.dataset_id
+                        and fav.user_id = #{userId}
+                    ) as favorite
+                </when>
+                <otherwise>
+                    false as favorite
+                </otherwise>
+            </choose>
+        <include refid="approvedDatasetSearchFromWhere"/>
+        <include refid="todayDownloadedDatasetCondition"/>
+        <include refid="approvedDatasetSortOrder"/>
+        limit #{limit}
+        offset #{offset}
+    </select>
+
+    <select id="countTodayDownloadedApprovedDatasets"
+            resultType="java.lang.Integer">
+        select count(distinct d.dataset_id)
+        <include refid="approvedDatasetSearchFromWhere"/>
+        <include refid="todayDownloadedDatasetCondition"/>
     </select>
 
     <select id="findDownloadSearchProviders"

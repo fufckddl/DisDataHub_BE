@@ -7,6 +7,7 @@ public class PointRadiusSimulationTableRowDto {
     private Integer rank;
     private Long featureId;
     private String featureName;
+    private String geometryType;
     private Integer nearbyCount;
     private Double latitude;
     private Double longitude;

@@ -1,6 +1,9 @@
 package com.hub.gisdatahub.download.service;
 
 import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -11,6 +14,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -45,7 +50,8 @@ import com.hub.gisdatahub.user.mapper.UserMapper;
 public class DatasetDownloadService {
 
     private static final List<String> DOWNLOAD_FORMATS = List.of("CSV", "GeoJSON", "SHP", "XLSX", "TIFF");
-    private static final List<String> CONVERTIBLE_FORMATS = List.of("CSV", "GEOJSON", "XLSX");
+    private static final List<String> CONVERTIBLE_FORMATS = List.of("CSV", "GEOJSON", "SHP", "XLSX");
+    private static final Charset DBF_CHARSET = StandardCharsets.UTF_8;
 
     private final DatasetDownloadMapper datasetDownloadMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -72,6 +78,7 @@ public class DatasetDownloadService {
             Integer categoryId,
             LocalDate startDate,
             LocalDate endDate,
+            Boolean downloadedToday,
             Integer page,
             Integer size,
             String sort,
@@ -81,17 +88,27 @@ public class DatasetDownloadService {
         String normalizedProvider = normalizeFilter(provider);
         String normalizedFileFormat = normalizeFilter(fileFormat);
         String normalizedSort = normalizeSort(sort);
+        boolean todayDownloadOnly = Boolean.TRUE.equals(downloadedToday);
         int safeSize = clamp(size == null ? 10 : size, 1, 50);
         int safePage = Math.max(page == null ? 1 : page, 1);
 
-        Integer totalCountValue = datasetDownloadMapper.countApprovedDownloadDatasets(
-                normalizedKeyword,
-                normalizedProvider,
-                normalizedFileFormat,
-                categoryId,
-                startDate,
-                endDate
-        );
+        Integer totalCountValue = todayDownloadOnly
+                ? datasetDownloadMapper.countTodayDownloadedApprovedDatasets(
+                        normalizedKeyword,
+                        normalizedProvider,
+                        normalizedFileFormat,
+                        categoryId,
+                        startDate,
+                        endDate
+                )
+                : datasetDownloadMapper.countApprovedDownloadDatasets(
+                        normalizedKeyword,
+                        normalizedProvider,
+                        normalizedFileFormat,
+                        categoryId,
+                        startDate,
+                        endDate
+                );
         int totalCount = totalCountValue == null ? 0 : totalCountValue;
         int totalPages = totalCount == 0 ? 0 : (int) Math.ceil((double) totalCount / safeSize);
 
@@ -102,18 +119,31 @@ public class DatasetDownloadService {
         int offset = (safePage - 1) * safeSize;
         List<DownloadDatasetListItemDto> datasetList = totalCount == 0
                 ? List.of()
-                : datasetDownloadMapper.findApprovedDownloadDatasetPage(
-                        normalizedKeyword,
-                        normalizedProvider,
-                        normalizedFileFormat,
-                        categoryId,
-                        startDate,
-                        endDate,
-                        safeSize,
-                        offset,
-                        normalizedSort,
-                        userId
-                );
+                : todayDownloadOnly
+                        ? datasetDownloadMapper.findTodayDownloadedApprovedDatasetPage(
+                                normalizedKeyword,
+                                normalizedProvider,
+                                normalizedFileFormat,
+                                categoryId,
+                                startDate,
+                                endDate,
+                                safeSize,
+                                offset,
+                                normalizedSort,
+                                userId
+                        )
+                        : datasetDownloadMapper.findApprovedDownloadDatasetPage(
+                                normalizedKeyword,
+                                normalizedProvider,
+                                normalizedFileFormat,
+                                categoryId,
+                                startDate,
+                                endDate,
+                                safeSize,
+                                offset,
+                                normalizedSort,
+                                userId
+                        );
 
         DownloadDatasetSearchResponseDto response = new DownloadDatasetSearchResponseDto();
         response.setDatasetList(datasetList);
@@ -324,6 +354,7 @@ public class DatasetDownloadService {
             DownloadExportResultDto result = switch (normalizedFormat) {
                 case "CSV" -> exportCsv(datasetId, datasetTitle);
                 case "GEOJSON" -> exportGeoJson(datasetId, datasetTitle);
+                case "SHP" -> exportShp(datasetId, datasetTitle);
                 case "XLSX" -> exportXlsx(datasetId, datasetTitle);
                 default -> null;
             };
@@ -490,7 +521,8 @@ public class DatasetDownloadService {
                     result = exportGeoJson(datasetId, dataset.getTitle());
                     break;
                 case "SHP":
-                    throw new ResponseStatusException(HttpStatus.NOT_IMPLEMENTED, "SHP 형식 변환 다운로드는 준비 중입니다.");
+                    result = exportShp(datasetId, dataset.getTitle());
+                    break;
                 case "XLSX":
                     result = exportXlsx(datasetId, dataset.getTitle());
                     break;
@@ -745,6 +777,725 @@ public class DatasetDownloadService {
             );
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "XLSX 파일 생성에 실패했습니다.", e);
+        }
+    }
+    private DownloadExportResultDto exportShp(Long datasetId, String datasetTitle) {
+        List<DatasetFeatureExportDto> sourceFeatures = datasetDownloadMapper.findDatasetFeaturesForExport(datasetId);
+
+        if (sourceFeatures.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "SHP로 변환할 공간 데이터가 없습니다.");
+        }
+
+        Map<ShpShapeGroup, List<ShpFeature>> groupedFeatures = new LinkedHashMap<>();
+        for (ShpShapeGroup group : ShpShapeGroup.values()) {
+            groupedFeatures.put(group, new ArrayList<>());
+        }
+
+        for (DatasetFeatureExportDto feature : sourceFeatures) {
+            for (ShpFeature shpFeature : parseShpFeatures(feature)) {
+                groupedFeatures.get(shpFeature.group).add(shpFeature);
+            }
+        }
+
+        int availableGroupCount = 0;
+        for (List<ShpFeature> features : groupedFeatures.values()) {
+            if (!features.isEmpty()) {
+                availableGroupCount++;
+            }
+        }
+
+        if (availableGroupCount == 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "SHP로 변환할 수 있는 공간 형식이 없습니다.");
+        }
+
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+             ZipOutputStream zipOutputStream = new ZipOutputStream(outputStream, StandardCharsets.UTF_8)) {
+
+            String baseName = sanitizeZipEntryName(datasetTitle);
+            for (Map.Entry<ShpShapeGroup, List<ShpFeature>> entry : groupedFeatures.entrySet()) {
+                if (entry.getValue().isEmpty()) {
+                    continue;
+                }
+
+                ShpShapeGroup group = entry.getKey();
+                ShpFileSet fileSet = buildShpFileSet(entry.getValue(), group);
+                String entryBaseName = availableGroupCount == 1 ? baseName : baseName + "_" + group.fileSuffix;
+
+                addZipEntry(zipOutputStream, entryBaseName + ".shp", fileSet.shp);
+                addZipEntry(zipOutputStream, entryBaseName + ".shx", fileSet.shx);
+                addZipEntry(zipOutputStream, entryBaseName + ".dbf", fileSet.dbf);
+                addZipEntry(zipOutputStream, entryBaseName + ".prj", fileSet.prj);
+                addZipEntry(zipOutputStream, entryBaseName + ".cpg", fileSet.cpg);
+            }
+
+            zipOutputStream.finish();
+            byte[] bytes = outputStream.toByteArray();
+
+            return new DownloadExportResultDto(
+                    datasetTitle + ".zip",
+                    "application/zip",
+                    bytes
+            );
+        } catch (IOException e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "SHP 파일 생성에 실패했습니다.", e);
+        }
+    }
+
+    private List<ShpFeature> parseShpFeatures(DatasetFeatureExportDto feature) {
+        String wkt = feature.getGeometryWkt();
+        if (wkt == null || wkt.isBlank()) {
+            return List.of();
+        }
+
+        String normalizedWkt = wkt.trim();
+        int sridSeparator = normalizedWkt.indexOf(';');
+        if (sridSeparator >= 0) {
+            normalizedWkt = normalizedWkt.substring(sridSeparator + 1).trim();
+        }
+
+        int bodyStartIndex = normalizedWkt.indexOf('(');
+        if (bodyStartIndex < 0) {
+            return List.of();
+        }
+
+        String type = normalizeWktType(normalizedWkt.substring(0, bodyStartIndex));
+        String body = normalizedWkt.substring(bodyStartIndex);
+
+        return switch (type) {
+            case "POINT" -> parsePointFeature(feature, body);
+            case "MULTIPOINT" -> parseMultiPointFeature(feature, body);
+            case "LINESTRING" -> parseLineFeature(feature, body);
+            case "MULTILINESTRING" -> parseMultiLineFeature(feature, body);
+            case "POLYGON" -> parsePolygonFeature(feature, body);
+            case "MULTIPOLYGON" -> parseMultiPolygonFeature(feature, body);
+            case "GEOMETRYCOLLECTION" -> parseGeometryCollectionFeature(feature, body);
+            default -> List.of();
+        };
+    }
+
+    private List<ShpFeature> parsePointFeature(DatasetFeatureExportDto feature, String body) {
+        ShpPoint point = parsePoint(stripOuterParentheses(body));
+        if (point == null) {
+            return List.of();
+        }
+        return List.of(toShpFeature(feature, ShpShapeGroup.POINT, List.of(List.of(point))));
+    }
+
+    private List<ShpFeature> parseMultiPointFeature(DatasetFeatureExportDto feature, String body) {
+        List<ShpFeature> result = new ArrayList<>();
+        for (String pointText : splitTopLevel(stripOuterParentheses(body))) {
+            ShpPoint point = parsePoint(stripOuterParentheses(pointText));
+            if (point != null) {
+                result.add(toShpFeature(feature, ShpShapeGroup.POINT, List.of(List.of(point))));
+            }
+        }
+        return result;
+    }
+
+    private List<ShpFeature> parseLineFeature(DatasetFeatureExportDto feature, String body) {
+        List<ShpPoint> points = parsePointList(stripOuterParentheses(body));
+        if (points.size() < 2) {
+            return List.of();
+        }
+        return List.of(toShpFeature(feature, ShpShapeGroup.POLYLINE, List.of(points)));
+    }
+
+    private List<ShpFeature> parseMultiLineFeature(DatasetFeatureExportDto feature, String body) {
+        List<List<ShpPoint>> parts = new ArrayList<>();
+        for (String lineText : splitTopLevel(stripSingleOuterParentheses(body))) {
+            List<ShpPoint> points = parsePointList(stripOuterParentheses(lineText));
+            if (points.size() >= 2) {
+                parts.add(points);
+            }
+        }
+        if (parts.isEmpty()) {
+            return List.of();
+        }
+        return List.of(toShpFeature(feature, ShpShapeGroup.POLYLINE, parts));
+    }
+
+    private List<ShpFeature> parsePolygonFeature(DatasetFeatureExportDto feature, String body) {
+        List<List<ShpPoint>> rings = parsePolygonRings(body);
+        if (rings.isEmpty()) {
+            return List.of();
+        }
+        return List.of(toShpFeature(feature, ShpShapeGroup.POLYGON, rings));
+    }
+
+    private List<ShpFeature> parseMultiPolygonFeature(DatasetFeatureExportDto feature, String body) {
+        List<List<ShpPoint>> parts = new ArrayList<>();
+        for (String polygonText : splitTopLevel(stripSingleOuterParentheses(body))) {
+            parts.addAll(parsePolygonRings(polygonText));
+        }
+        if (parts.isEmpty()) {
+            return List.of();
+        }
+        return List.of(toShpFeature(feature, ShpShapeGroup.POLYGON, parts));
+    }
+
+    private List<ShpFeature> parseGeometryCollectionFeature(DatasetFeatureExportDto feature, String body) {
+        List<ShpFeature> result = new ArrayList<>();
+        for (String geometryText : splitTopLevel(stripSingleOuterParentheses(body))) {
+            DatasetFeatureExportDto copiedFeature = new DatasetFeatureExportDto();
+            copiedFeature.setFeatureId(feature.getFeatureId());
+            copiedFeature.setFeatureName(feature.getFeatureName());
+            copiedFeature.setSpatialType(feature.getSpatialType());
+            copiedFeature.setPropertiesJson(feature.getPropertiesJson());
+            copiedFeature.setGeometryWkt(geometryText);
+            result.addAll(parseShpFeatures(copiedFeature));
+        }
+        return result;
+    }
+
+    private List<List<ShpPoint>> parsePolygonRings(String body) {
+        List<List<ShpPoint>> rings = new ArrayList<>();
+        for (String ringText : splitTopLevel(stripSingleOuterParentheses(body))) {
+            List<ShpPoint> points = parsePointList(stripOuterParentheses(ringText));
+            if (points.size() >= 3) {
+                rings.add(closeRing(points));
+            }
+        }
+        return rings;
+    }
+
+    private List<ShpPoint> parsePointList(String pointsText) {
+        List<ShpPoint> points = new ArrayList<>();
+        for (String pointText : splitTopLevel(pointsText)) {
+            ShpPoint point = parsePoint(pointText);
+            if (point != null) {
+                points.add(point);
+            }
+        }
+        return points;
+    }
+
+    private ShpPoint parsePoint(String pointText) {
+        if (pointText == null || pointText.isBlank()) {
+            return null;
+        }
+
+        String normalized = stripOuterParentheses(pointText)
+                .replace(",", " ")
+                .trim()
+                .replaceAll("\\s+", " ");
+        String[] values = normalized.split(" ");
+        if (values.length < 2) {
+            return null;
+        }
+
+        try {
+            return new ShpPoint(Double.parseDouble(values[0]), Double.parseDouble(values[1]));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private List<ShpPoint> closeRing(List<ShpPoint> points) {
+        if (points.isEmpty()) {
+            return points;
+        }
+
+        List<ShpPoint> closed = new ArrayList<>(points);
+        ShpPoint first = closed.get(0);
+        ShpPoint last = closed.get(closed.size() - 1);
+        if (Double.compare(first.x, last.x) != 0 || Double.compare(first.y, last.y) != 0) {
+            closed.add(new ShpPoint(first.x, first.y));
+        }
+        return closed;
+    }
+
+    private String normalizeWktType(String type) {
+        String normalized = type == null ? "" : type.trim().toUpperCase(Locale.ROOT).replaceAll("\\s+", " ");
+        if (normalized.endsWith(" ZM")) {
+            return normalized.substring(0, normalized.length() - 3).trim();
+        }
+        if (normalized.endsWith(" Z") || normalized.endsWith(" M")) {
+            return normalized.substring(0, normalized.length() - 2).trim();
+        }
+        return normalized;
+    }
+
+    private String stripOuterParentheses(String value) {
+        if (value == null) {
+            return "";
+        }
+
+        String trimmed = value.trim();
+        while (trimmed.startsWith("(") && trimmed.endsWith(")") && isOuterParenthesesPair(trimmed)) {
+            trimmed = trimmed.substring(1, trimmed.length() - 1).trim();
+        }
+        return trimmed;
+    }
+
+    private String stripSingleOuterParentheses(String value) {
+        if (value == null) {
+            return "";
+        }
+
+        String trimmed = value.trim();
+        if (trimmed.startsWith("(") && trimmed.endsWith(")") && isOuterParenthesesPair(trimmed)) {
+            return trimmed.substring(1, trimmed.length() - 1).trim();
+        }
+        return trimmed;
+    }
+
+    private boolean isOuterParenthesesPair(String value) {
+        int depth = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (ch == '(') {
+                depth++;
+            } else if (ch == ')') {
+                depth--;
+                if (depth == 0 && i < value.length() - 1) {
+                    return false;
+                }
+            }
+        }
+        return depth == 0;
+    }
+
+    private List<String> splitTopLevel(String value) {
+        List<String> result = new ArrayList<>();
+        if (value == null || value.isBlank()) {
+            return result;
+        }
+
+        int depth = 0;
+        int start = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char ch = value.charAt(i);
+            if (ch == '(') {
+                depth++;
+            } else if (ch == ')') {
+                depth--;
+            } else if (ch == ',' && depth == 0) {
+                result.add(value.substring(start, i).trim());
+                start = i + 1;
+            }
+        }
+        result.add(value.substring(start).trim());
+        return result;
+    }
+
+    private ShpFeature toShpFeature(
+            DatasetFeatureExportDto feature,
+            ShpShapeGroup group,
+            List<List<ShpPoint>> parts
+    ) {
+        String name = feature.getFeatureName();
+        if (name == null || name.isBlank()) {
+            name = feature.getFeatureId() == null ? "" : String.valueOf(feature.getFeatureId());
+        }
+
+        String spatialType = feature.getSpatialType();
+        if (spatialType == null || spatialType.isBlank()) {
+            spatialType = group.label;
+        }
+
+        return new ShpFeature(feature.getFeatureId(), name, spatialType, group, parts);
+    }
+
+    private ShpFileSet buildShpFileSet(List<ShpFeature> features, ShpShapeGroup group) throws IOException {
+        List<ShpRecord> records = new ArrayList<>();
+        ShpBounds bounds = new ShpBounds();
+
+        for (ShpFeature feature : features) {
+            byte[] content = switch (group) {
+                case POINT -> buildPointRecordContent(feature);
+                case POLYLINE, POLYGON -> buildPartRecordContent(feature);
+            };
+
+            if (content.length == 0) {
+                continue;
+            }
+
+            records.add(new ShpRecord(feature, content));
+            bounds.include(feature.points());
+        }
+
+        if (records.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "SHP로 변환할 수 있는 공간 객체가 없습니다.");
+        }
+
+        return new ShpFileSet(
+                buildShp(records, group, bounds),
+                buildShx(records, group, bounds),
+                buildDbf(records),
+                buildPrj(),
+                "UTF-8".getBytes(StandardCharsets.UTF_8)
+        );
+    }
+
+    private byte[] buildPointRecordContent(ShpFeature feature) throws IOException {
+        if (feature.parts.isEmpty() || feature.parts.get(0).isEmpty()) {
+            return new byte[0];
+        }
+
+        ShpPoint point = feature.parts.get(0).get(0);
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+             DataOutputStream dataOutputStream = new DataOutputStream(outputStream)) {
+            writeIntLE(dataOutputStream, ShpShapeGroup.POINT.shapeType);
+            writeDoubleLE(dataOutputStream, point.x);
+            writeDoubleLE(dataOutputStream, point.y);
+            return outputStream.toByteArray();
+        }
+    }
+
+    private byte[] buildPartRecordContent(ShpFeature feature) throws IOException {
+        List<List<ShpPoint>> parts = new ArrayList<>();
+        int pointCount = 0;
+        int minimumPointCount = feature.group == ShpShapeGroup.POLYLINE ? 2 : 4;
+
+        for (List<ShpPoint> part : feature.parts) {
+            if (part.size() >= minimumPointCount) {
+                parts.add(part);
+                pointCount += part.size();
+            }
+        }
+
+        if (parts.isEmpty()) {
+            return new byte[0];
+        }
+
+        ShpBounds bounds = new ShpBounds();
+        bounds.include(parts);
+
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+             DataOutputStream dataOutputStream = new DataOutputStream(outputStream)) {
+            writeIntLE(dataOutputStream, feature.group.shapeType);
+            writeBoundsLE(dataOutputStream, bounds);
+            writeIntLE(dataOutputStream, parts.size());
+            writeIntLE(dataOutputStream, pointCount);
+
+            int partOffset = 0;
+            for (List<ShpPoint> part : parts) {
+                writeIntLE(dataOutputStream, partOffset);
+                partOffset += part.size();
+            }
+
+            for (List<ShpPoint> part : parts) {
+                for (ShpPoint point : part) {
+                    writeDoubleLE(dataOutputStream, point.x);
+                    writeDoubleLE(dataOutputStream, point.y);
+                }
+            }
+
+            return outputStream.toByteArray();
+        }
+    }
+
+    private byte[] buildShp(List<ShpRecord> records, ShpShapeGroup group, ShpBounds bounds) throws IOException {
+        int fileLengthBytes = 100;
+        for (ShpRecord record : records) {
+            fileLengthBytes += 8 + record.content.length;
+        }
+
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+             DataOutputStream dataOutputStream = new DataOutputStream(outputStream)) {
+            writeShpHeader(dataOutputStream, group.shapeType, fileLengthBytes / 2, bounds);
+
+            for (int i = 0; i < records.size(); i++) {
+                ShpRecord record = records.get(i);
+                writeIntBE(dataOutputStream, i + 1);
+                writeIntBE(dataOutputStream, record.content.length / 2);
+                dataOutputStream.write(record.content);
+            }
+
+            return outputStream.toByteArray();
+        }
+    }
+
+    private byte[] buildShx(List<ShpRecord> records, ShpShapeGroup group, ShpBounds bounds) throws IOException {
+        int fileLengthBytes = 100 + (records.size() * 8);
+
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+             DataOutputStream dataOutputStream = new DataOutputStream(outputStream)) {
+            writeShpHeader(dataOutputStream, group.shapeType, fileLengthBytes / 2, bounds);
+
+            int offsetWords = 50;
+            for (ShpRecord record : records) {
+                writeIntBE(dataOutputStream, offsetWords);
+                writeIntBE(dataOutputStream, record.content.length / 2);
+                offsetWords += (8 + record.content.length) / 2;
+            }
+
+            return outputStream.toByteArray();
+        }
+    }
+
+    private byte[] buildDbf(List<ShpRecord> records) throws IOException {
+        int headerLength = 32 + (3 * 32) + 1;
+        int recordLength = 1 + 18 + 80 + 16;
+        LocalDate now = LocalDate.now();
+
+        try (ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+             DataOutputStream dataOutputStream = new DataOutputStream(outputStream)) {
+            dataOutputStream.writeByte(0x03);
+            dataOutputStream.writeByte(now.getYear() - 1900);
+            dataOutputStream.writeByte(now.getMonthValue());
+            dataOutputStream.writeByte(now.getDayOfMonth());
+            writeIntLE(dataOutputStream, records.size());
+            writeShortLE(dataOutputStream, headerLength);
+            writeShortLE(dataOutputStream, recordLength);
+            for (int i = 0; i < 20; i++) {
+                dataOutputStream.writeByte(0);
+            }
+
+            writeDbfFieldDescriptor(dataOutputStream, "FID", 'N', 18, 0);
+            writeDbfFieldDescriptor(dataOutputStream, "NAME", 'C', 80, 0);
+            writeDbfFieldDescriptor(dataOutputStream, "TYPE", 'C', 16, 0);
+            dataOutputStream.writeByte(0x0D);
+
+            for (ShpRecord record : records) {
+                dataOutputStream.writeByte(' ');
+                writeDbfNumber(dataOutputStream, record.feature.featureId, 18);
+                writeDbfText(dataOutputStream, record.feature.name, 80);
+                writeDbfText(dataOutputStream, record.feature.spatialType, 16);
+            }
+            dataOutputStream.writeByte(0x1A);
+
+            return outputStream.toByteArray();
+        }
+    }
+
+    private byte[] buildPrj() {
+        String wgs84 = "GEOGCS[\"WGS 84\",DATUM[\"WGS_1984\","
+                + "SPHEROID[\"WGS 84\",6378137,298.257223563]],"
+                + "PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433]]";
+        return wgs84.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private void writeShpHeader(
+            DataOutputStream outputStream,
+            int shapeType,
+            int fileLengthWords,
+            ShpBounds bounds
+    ) throws IOException {
+        writeIntBE(outputStream, 9994);
+        for (int i = 0; i < 5; i++) {
+            writeIntBE(outputStream, 0);
+        }
+        writeIntBE(outputStream, fileLengthWords);
+        writeIntLE(outputStream, 1000);
+        writeIntLE(outputStream, shapeType);
+        writeBoundsLE(outputStream, bounds);
+        for (int i = 0; i < 4; i++) {
+            writeDoubleLE(outputStream, 0.0);
+        }
+    }
+
+    private void writeBoundsLE(DataOutputStream outputStream, ShpBounds bounds) throws IOException {
+        writeDoubleLE(outputStream, bounds.minX());
+        writeDoubleLE(outputStream, bounds.minY());
+        writeDoubleLE(outputStream, bounds.maxX());
+        writeDoubleLE(outputStream, bounds.maxY());
+    }
+
+    private void writeDbfFieldDescriptor(
+            DataOutputStream outputStream,
+            String name,
+            char type,
+            int length,
+            int decimalCount
+    ) throws IOException {
+        byte[] nameBytes = new byte[11];
+        byte[] rawNameBytes = name.getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(rawNameBytes, 0, nameBytes, 0, Math.min(rawNameBytes.length, 10));
+        outputStream.write(nameBytes);
+        outputStream.writeByte(type);
+        writeIntLE(outputStream, 0);
+        outputStream.writeByte(length);
+        outputStream.writeByte(decimalCount);
+        for (int i = 0; i < 14; i++) {
+            outputStream.writeByte(0);
+        }
+    }
+
+    private void writeDbfText(DataOutputStream outputStream, String value, int length) throws IOException {
+        byte[] bytes = fitDbfText(value == null ? "" : value, length);
+        outputStream.write(bytes);
+        for (int i = bytes.length; i < length; i++) {
+            outputStream.writeByte(' ');
+        }
+    }
+
+    private void writeDbfNumber(DataOutputStream outputStream, Long value, int length) throws IOException {
+        String number = value == null ? "" : String.valueOf(value);
+        if (number.length() > length) {
+            number = number.substring(number.length() - length);
+        }
+
+        for (int i = number.length(); i < length; i++) {
+            outputStream.writeByte(' ');
+        }
+        outputStream.write(number.getBytes(StandardCharsets.US_ASCII));
+    }
+
+    private byte[] fitDbfText(String value, int length) {
+        String text = value;
+        while (!text.isEmpty() && text.getBytes(DBF_CHARSET).length > length) {
+            text = text.substring(0, text.length() - 1);
+        }
+        return text.getBytes(DBF_CHARSET);
+    }
+
+    private void addZipEntry(ZipOutputStream zipOutputStream, String entryName, byte[] bytes) throws IOException {
+        ZipEntry zipEntry = new ZipEntry(entryName);
+        zipOutputStream.putNextEntry(zipEntry);
+        zipOutputStream.write(bytes);
+        zipOutputStream.closeEntry();
+    }
+
+    private String sanitizeZipEntryName(String value) {
+        String name = value == null || value.isBlank() ? "dataset" : value.trim();
+        return name.replaceAll("[\\\\/:*?\"<>|]", "_");
+    }
+
+    private void writeIntBE(DataOutputStream outputStream, int value) throws IOException {
+        outputStream.writeInt(value);
+    }
+
+    private void writeIntLE(DataOutputStream outputStream, int value) throws IOException {
+        outputStream.writeInt(Integer.reverseBytes(value));
+    }
+
+    private void writeShortLE(DataOutputStream outputStream, int value) throws IOException {
+        outputStream.writeByte(value & 0xFF);
+        outputStream.writeByte((value >>> 8) & 0xFF);
+    }
+
+    private void writeDoubleLE(DataOutputStream outputStream, double value) throws IOException {
+        outputStream.writeLong(Long.reverseBytes(Double.doubleToLongBits(value)));
+    }
+
+    private enum ShpShapeGroup {
+        POINT(1, "point", "POINT"),
+        POLYLINE(3, "line", "LINE"),
+        POLYGON(5, "polygon", "POLYGON");
+
+        private final int shapeType;
+        private final String fileSuffix;
+        private final String label;
+
+        ShpShapeGroup(int shapeType, String fileSuffix, String label) {
+            this.shapeType = shapeType;
+            this.fileSuffix = fileSuffix;
+            this.label = label;
+        }
+    }
+
+    private static class ShpFeature {
+        private final Long featureId;
+        private final String name;
+        private final String spatialType;
+        private final ShpShapeGroup group;
+        private final List<List<ShpPoint>> parts;
+
+        private ShpFeature(
+                Long featureId,
+                String name,
+                String spatialType,
+                ShpShapeGroup group,
+                List<List<ShpPoint>> parts
+        ) {
+            this.featureId = featureId;
+            this.name = name;
+            this.spatialType = spatialType;
+            this.group = group;
+            this.parts = parts;
+        }
+
+        private List<List<ShpPoint>> points() {
+            return parts;
+        }
+    }
+
+    private static class ShpPoint {
+        private final double x;
+        private final double y;
+
+        private ShpPoint(double x, double y) {
+            this.x = x;
+            this.y = y;
+        }
+    }
+
+    private static class ShpRecord {
+        private final ShpFeature feature;
+        private final byte[] content;
+
+        private ShpRecord(ShpFeature feature, byte[] content) {
+            this.feature = feature;
+            this.content = content;
+        }
+    }
+
+    private static class ShpFileSet {
+        private final byte[] shp;
+        private final byte[] shx;
+        private final byte[] dbf;
+        private final byte[] prj;
+        private final byte[] cpg;
+
+        private ShpFileSet(byte[] shp, byte[] shx, byte[] dbf, byte[] prj, byte[] cpg) {
+            this.shp = shp;
+            this.shx = shx;
+            this.dbf = dbf;
+            this.prj = prj;
+            this.cpg = cpg;
+        }
+    }
+
+    private static class ShpBounds {
+        private boolean empty = true;
+        private double minX;
+        private double minY;
+        private double maxX;
+        private double maxY;
+
+        private void include(List<List<ShpPoint>> parts) {
+            for (List<ShpPoint> part : parts) {
+                for (ShpPoint point : part) {
+                    include(point);
+                }
+            }
+        }
+
+        private void include(ShpPoint point) {
+            if (point == null) {
+                return;
+            }
+
+            if (empty) {
+                minX = point.x;
+                maxX = point.x;
+                minY = point.y;
+                maxY = point.y;
+                empty = false;
+                return;
+            }
+
+            minX = Math.min(minX, point.x);
+            maxX = Math.max(maxX, point.x);
+            minY = Math.min(minY, point.y);
+            maxY = Math.max(maxY, point.y);
+        }
+
+        private double minX() {
+            return empty ? 0.0 : minX;
+        }
+
+        private double minY() {
+            return empty ? 0.0 : minY;
+        }
+
+        private double maxX() {
+            return empty ? 0.0 : maxX;
+        }
+
+        private double maxY() {
+            return empty ? 0.0 : maxY;
         }
     }
 }

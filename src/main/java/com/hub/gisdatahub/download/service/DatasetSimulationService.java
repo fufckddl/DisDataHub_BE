@@ -2,7 +2,6 @@ package com.hub.gisdatahub.download.service;
 
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.StringJoiner;
@@ -60,7 +59,7 @@ public class DatasetSimulationService {
         }
 
         validateDatasetDetailAccess(dataset, userId);
-        validatePointSimulationRequest(dataset, requestDto);
+        validateRadiusSimulationRequest(dataset, requestDto);
 
         Integer radius = requestDto.getRadius();
         Double lat = requestDto.getLat();
@@ -68,8 +67,11 @@ public class DatasetSimulationService {
         PointRadiusSimulationSummaryDto summary =
                 datasetSimulationMapper.findPointRadiusSimulationSummary(datasetId, radius, lat, lng);
 
-        if (summary == null || summary.getTotalPointCount() == null || summary.getTotalPointCount() == 0) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "시뮬레이션할 Point 공간 데이터가 없습니다.");
+        Integer totalFeatureCount = summary == null
+                ? null
+                : (summary.getTotalFeatureCount() != null ? summary.getTotalFeatureCount() : summary.getTotalPointCount());
+        if (summary == null || totalFeatureCount == null || totalFeatureCount == 0) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "시뮬레이션할 공간 데이터가 없습니다.");
         }
 
         PointRadiusSimulationResponseDto response = new PointRadiusSimulationResponseDto();
@@ -124,7 +126,7 @@ public class DatasetSimulationService {
         }
     }
 
-    private void validatePointSimulationRequest(
+    private void validateRadiusSimulationRequest(
             DownloadDatasetDetailDto dataset,
             PointRadiusSimulationRequestDto requestDto
     ) {
@@ -153,13 +155,6 @@ public class DatasetSimulationService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "공간 데이터셋만 시뮬레이션할 수 있습니다.");
         }
 
-        String spatialType = dataset.getSpatialType() == null
-                ? ""
-                : dataset.getSpatialType().trim().toUpperCase(Locale.ROOT);
-
-        if (!spatialType.contains("POINT")) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Point 타입 데이터셋만 1차 시뮬레이션 대상입니다.");
-        }
     }
 
     private void validateAreaMeasurementRequest(

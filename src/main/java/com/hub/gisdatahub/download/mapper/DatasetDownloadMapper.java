@@ -45,6 +45,28 @@ public interface DatasetDownloadMapper {
         @Param("endDate") LocalDate endDate
     );
 
+    public List<DownloadDatasetListItemDto> findTodayDownloadedApprovedDatasetPage(
+        @Param("keyword") String keyword,
+        @Param("provider") String provider,
+        @Param("fileFormat") String fileFormat,
+        @Param("categoryId") Integer categoryId,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate,
+        @Param("limit") Integer limit,
+        @Param("offset") Integer offset,
+        @Param("sort") String sort,
+        @Param("userId") Integer userId
+    );
+
+    public Integer countTodayDownloadedApprovedDatasets(
+        @Param("keyword") String keyword,
+        @Param("provider") String provider,
+        @Param("fileFormat") String fileFormat,
+        @Param("categoryId") Integer categoryId,
+        @Param("startDate") LocalDate startDate,
+        @Param("endDate") LocalDate endDate
+    );
+
     public List<String> findDownloadSearchProviders();
 
     public List<String> findDownloadSearchFileFormats();
