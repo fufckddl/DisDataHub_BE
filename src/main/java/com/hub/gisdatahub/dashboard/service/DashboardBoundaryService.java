@@ -332,18 +332,29 @@ public class DashboardBoundaryService {
                       AND COALESCE(b.boundary_type, c.level) = c.level
                       AND b.geom IS NOT NULL
                 ),
-                collections AS (
+                requested_levels AS (
                     SELECT
-                        level,
+                        DISTINCT level
+                    FROM features
+                )
+                SELECT COALESCE(
+                    jsonb_object_agg(
+                        rl.level,
                         jsonb_build_object(
                             'type', 'FeatureCollection',
-                            'features', COALESCE(jsonb_agg(feature ORDER BY area_code), '[]'::jsonb)
-                        ) AS collection
-                    FROM features
-                    GROUP BY level
-                )
-                SELECT COALESCE(jsonb_object_agg(level, collection), '{}'::jsonb)::text
-                FROM collections
+                            'features', COALESCE(
+                                (
+                                    SELECT jsonb_agg(f.feature ORDER BY f.area_code)
+                                    FROM features f
+                                    WHERE f.level = rl.level
+                                ),
+                                '[]'::jsonb
+                            )
+                        )
+                    ),
+                    '{}'::jsonb
+                )::text
+                FROM requested_levels rl
                 """;
 
         String geoJsonByLevel = jdbcTemplate.queryForObject(
@@ -986,25 +997,19 @@ public class DashboardBoundaryService {
                       AND f.latitude IS NOT NULL
                 ),
                 stats_rows AS (
-                    SELECT
+                    SELECT DISTINCT ON (fr.dataset_code, fr.area_code)
                         fr.dataset_code,
                         d.dataset_name,
                         fr.area_code,
                         fr.area_name,
                         fr.full_name,
                         fr.sido_code,
-                        COUNT(*)::numeric AS numeric_value,
-                        SUM(COUNT(*)) OVER ()::numeric AS total_count
+                        COUNT(*) OVER (PARTITION BY fr.dataset_code, fr.area_code)::numeric AS numeric_value,
+                        COUNT(*) OVER ()::numeric AS total_count
                     FROM feature_rows fr
                     JOIN public.sd_dashboard_dataset d
                         ON d.dataset_code = fr.dataset_code
-                    GROUP BY
-                        fr.dataset_code,
-                        d.dataset_name,
-                        fr.area_code,
-                        fr.area_name,
-                        fr.full_name,
-                        fr.sido_code
+                    ORDER BY fr.dataset_code, fr.area_code
                 )
                 SELECT
                     dataset_code,
@@ -1083,13 +1088,12 @@ public class DashboardBoundaryService {
         String resolvedAreaCode = resolveOptionalAreaCode(areaCode);
         int resolvedLimit = normalizeObservationLimit(limit);
 
-        List<Map<String, Object>> rows = findDashboardGisObservationRows(
-                resolvedDatasetCode,
-                resolvedAreaCode,
-                resolvedLimit);
-        if (rows.isEmpty() && resolvedAreaCode != null && MOIS_AVERAGE_AGE_DATASET_CODE.equals(resolvedDatasetCode)) {
-            rows = findAverageAgeFallbackRows(resolvedAreaCode);
-        }
+        List<Map<String, Object>> rows = resolvedAreaCode != null && MOIS_AVERAGE_AGE_DATASET_CODE.equals(resolvedDatasetCode)
+                ? findAverageAgeRows(resolvedAreaCode)
+                : findDashboardGisObservationRows(
+                        resolvedDatasetCode,
+                        resolvedAreaCode,
+                        resolvedLimit);
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("datasetCode", resolvedDatasetCode);
@@ -1381,50 +1385,97 @@ public class DashboardBoundaryService {
         }
     }
 
-    private List<Map<String, Object>> findAverageAgeFallbackRows(String areaCode) {
+    private List<Map<String, Object>> findAverageAgeRows(String areaCode) {
         try {
             AreaMeta areaMeta = findAreaMeta(areaCode);
             AreaPopulationChartResponse population = getAreaPopulation(areaCode, areaMeta.level(), null, "00");
-            BigDecimal weightedTotal = BigDecimal.ZERO;
-            BigDecimal populationTotal = BigDecimal.ZERO;
             List<PopulationChartDataset> datasets = population.getDatasets() == null
                     ? List.of()
                     : population.getDatasets();
-
-            for (PopulationChartDataset dataset : datasets) {
-                List<BigDecimal> values = dataset.getData() == null ? List.of() : dataset.getData();
-                for (int index = 0; index < values.size() && index < POPULATION_AGE_MIDPOINTS.size(); index++) {
-                    BigDecimal count = values.get(index) == null ? BigDecimal.ZERO : values.get(index);
-                    weightedTotal = weightedTotal.add(count.multiply(POPULATION_AGE_MIDPOINTS.get(index)));
-                    populationTotal = populationTotal.add(count);
-                }
+            List<BigDecimal> maleValues = datasets.size() > 0 && datasets.get(0).getData() != null
+                    ? datasets.get(0).getData()
+                    : List.of();
+            List<BigDecimal> femaleValues = datasets.size() > 1 && datasets.get(1).getData() != null
+                    ? datasets.get(1).getData()
+                    : List.of();
+            List<BigDecimal> totalValues = new ArrayList<>();
+            int maxSize = Math.max(maleValues.size(), femaleValues.size());
+            for (int index = 0; index < maxSize; index++) {
+                totalValues.add(valueAt(maleValues, index).add(valueAt(femaleValues, index)));
             }
 
-            if (populationTotal.compareTo(BigDecimal.ZERO) <= 0) {
+            BigDecimal totalAverageAge = weightedAverageAge(totalValues);
+            BigDecimal maleAverageAge = weightedAverageAge(maleValues);
+            BigDecimal femaleAverageAge = weightedAverageAge(femaleValues);
+
+            if (totalAverageAge == null && maleAverageAge == null && femaleAverageAge == null) {
                 return List.of();
             }
 
-            BigDecimal averageAge = weightedTotal.divide(populationTotal, 1, RoundingMode.HALF_UP);
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("datasetCode", MOIS_AVERAGE_AGE_DATASET_CODE);
-            row.put("datasetName", "성별 주민등록 평균연령");
-            row.put("metricCode", "METRIC_001");
-            row.put("metricName", "전체 평균연령");
-            row.put("areaCode", population.getAreaCode());
-            row.put("areaLevel", areaMeta.level());
-            row.put("sourceAreaCode", areaCode);
-            row.put("label", population.getFullName() != null ? population.getFullName() : population.getAreaName());
-            row.put("baseDate", population.getBaseDate());
-            row.put("baseHour", population.getHour());
-            row.put("collectedAt", null);
-            row.put("value", averageAge);
-            row.put("unit", "세");
-            row.put("totalRowCount", 1L);
-            row.put("totalNumericValue", averageAge);
-            return List.of(row);
+            List<Map<String, Object>> rows = new ArrayList<>();
+            addAverageAgeRow(rows, population, areaMeta, "AVG_AGE_TOTAL", "전체 평균연령", "전체", totalAverageAge);
+            addAverageAgeRow(rows, population, areaMeta, "AVG_AGE_MALE", "남성 평균연령", "남성", maleAverageAge);
+            addAverageAgeRow(rows, population, areaMeta, "AVG_AGE_FEMALE", "여성 평균연령", "여성", femaleAverageAge);
+            BigDecimal totalNumericValue = rows.stream()
+                    .map(row -> (BigDecimal) row.get("value"))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            for (Map<String, Object> row : rows) {
+                row.put("totalRowCount", rows.size());
+                row.put("totalNumericValue", totalNumericValue);
+            }
+            return rows;
         } catch (ResponseStatusException exception) {
             return List.of();
         }
+    }
+
+    private BigDecimal valueAt(List<BigDecimal> values, int index) {
+        if (index < 0 || index >= values.size() || values.get(index) == null) {
+            return BigDecimal.ZERO;
+        }
+        return values.get(index);
+    }
+
+    private BigDecimal weightedAverageAge(List<BigDecimal> values) {
+        BigDecimal weightedTotal = BigDecimal.ZERO;
+        BigDecimal populationTotal = BigDecimal.ZERO;
+        for (int index = 0; index < values.size() && index < POPULATION_AGE_MIDPOINTS.size(); index++) {
+            BigDecimal count = values.get(index) == null ? BigDecimal.ZERO : values.get(index);
+            weightedTotal = weightedTotal.add(count.multiply(POPULATION_AGE_MIDPOINTS.get(index)));
+            populationTotal = populationTotal.add(count);
+        }
+        if (populationTotal.compareTo(BigDecimal.ZERO) <= 0) {
+            return null;
+        }
+        return weightedTotal.divide(populationTotal, 1, RoundingMode.HALF_UP);
+    }
+
+    private void addAverageAgeRow(
+            List<Map<String, Object>> rows,
+            AreaPopulationChartResponse population,
+            AreaMeta areaMeta,
+            String metricCode,
+            String metricName,
+            String label,
+            BigDecimal value) {
+        if (value == null) {
+            return;
+        }
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("datasetCode", MOIS_AVERAGE_AGE_DATASET_CODE);
+        row.put("datasetName", "성별 주민등록 평균연령");
+        row.put("metricCode", metricCode);
+        row.put("metricName", metricName);
+        row.put("areaCode", population.getAreaCode());
+        row.put("areaLevel", areaMeta.level());
+        row.put("sourceAreaCode", population.getAreaCode());
+        row.put("label", label);
+        row.put("baseDate", population.getBaseDate());
+        row.put("baseHour", population.getHour());
+        row.put("collectedAt", null);
+        row.put("value", value);
+        row.put("unit", "세");
+        rows.add(row);
     }
 
     private String getSidoBoundaries(String sidoCode, Bbox bbox) {

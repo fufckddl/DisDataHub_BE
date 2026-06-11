@@ -63,7 +63,11 @@ public class SecurityConfig {
                 // 요청 URL별 인증 필요 여부 설정
                 .authorizeHttpRequests(auth -> auth
                         // 회원가입, 로그인은 토큰 없이 사용 가능
-                        .requestMatchers(HttpMethod.POST, "/api/users/join", "/api/users/login").permitAll()
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/users/join",
+                                "/api/users/login",
+                                "/api/users/admin/login").permitAll()
                         .requestMatchers(
                                 HttpMethod.POST,
                                 "/api/opendata/collect/living-population/sigungu/collect",

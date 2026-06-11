@@ -10,6 +10,7 @@ import com.hub.gisdatahub.user.dto.UserJoinRequest;
 import com.hub.gisdatahub.user.dto.UserLoginRequestDto;
 import com.hub.gisdatahub.user.dto.UserLoginResponseDto;
 import com.hub.gisdatahub.user.mapper.UserMapper;
+import com.hub.gisdatahub.user.type.UserRole;
 import com.hub.gisdatahub.user.type.UserStatus;
 
 @Service
@@ -51,6 +52,14 @@ public class UserService {
     }
 
     public UserLoginResponseDto login(UserLoginRequestDto userLoginRequestDto) {
+        return loginByRole(userLoginRequestDto, UserRole.USER, UserRole.RESEARCHER);
+    }
+
+    public UserLoginResponseDto adminLogin(UserLoginRequestDto userLoginRequestDto) {
+        return loginByRole(userLoginRequestDto, UserRole.ADMIN);
+    }
+
+    private UserLoginResponseDto loginByRole(UserLoginRequestDto userLoginRequestDto, UserRole... allowedRoles) {
         User user = userMapper.findByAccountName(userLoginRequestDto.getAccountName());
 
         if (user == null) {
@@ -60,9 +69,25 @@ public class UserService {
         if (!passwordEncoder.matches(userLoginRequestDto.getPassword(), user.getPassword())) {
             return new UserLoginResponseDto(false, null, null, 0);
         }
-        String token = jwtUtil.generateToken(user.getId());
 
-        return new UserLoginResponseDto(true, token, user.getUsername(), user.getId());
+        if (!isAllowedRole(user.getRole(), allowedRoles)) {
+            return new UserLoginResponseDto(false, null, null, 0);
+        }
+
+        String token = jwtUtil.generateToken(user.getId());
+        return new UserLoginResponseDto(true, token, user.getUsername(), user.getId(), user.getRole().name());
+    }
+
+    private boolean isAllowedRole(UserRole userRole, UserRole... allowedRoles) {
+        if (userRole == null) {
+            return false;
+        }
+        for (UserRole allowedRole : allowedRoles) {
+            if (userRole == allowedRole) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public User getMe(int userId) {

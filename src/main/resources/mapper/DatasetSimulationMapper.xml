@@ -98,16 +98,14 @@
             d.title as dataset_title,
             #{radius} as radius,
             (select count(*)::int from point_features) as total_point_count,
-            count(r.feature_id)::int as matched_point_count,
-            count(r.feature_id)::int as hotspot_count,
-            coalesce(round(avg(r.distance_meters)::numeric, 2), 0)::double precision as average_distance_meters,
-            coalesce(round(min(r.distance_meters)::numeric, 2), 0)::double precision as nearest_distance_meters,
-            coalesce(round(avg(r.distance_meters)::numeric, 2), 0)::double precision as average_nearby_count,
-            coalesce(round(max(r.distance_meters))::int, 0) as max_nearby_count
+            (select count(*)::int from ranked) as matched_point_count,
+            (select count(*)::int from ranked) as hotspot_count,
+            coalesce((select round(avg(r.distance_meters)::numeric, 2)::double precision from ranked r), 0) as average_distance_meters,
+            coalesce((select round(min(r.distance_meters)::numeric, 2)::double precision from ranked r), 0) as nearest_distance_meters,
+            coalesce((select round(avg(r.distance_meters)::numeric, 2)::double precision from ranked r), 0) as average_nearby_count,
+            coalesce((select round(max(r.distance_meters))::int from ranked r), 0) as max_nearby_count
         from sd_gis_dataset d
-        left join ranked r on true
         where d.dataset_id = #{datasetId}
-        group by d.title
     </select>
 
     <select id="findPointRadiusSimulationTable"

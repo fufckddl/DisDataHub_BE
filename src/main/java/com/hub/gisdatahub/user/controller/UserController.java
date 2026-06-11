@@ -33,6 +33,11 @@ public class UserController {
         UserLoginResponseDto userLoginResponseDto = userService.login(entity);
         return ResponseEntity.ok(userLoginResponseDto);
     }
+    @PostMapping("admin/login")
+    public ResponseEntity<UserLoginResponseDto> adminLogin(@RequestBody UserLoginRequestDto entity) {
+        UserLoginResponseDto userLoginResponseDto = userService.adminLogin(entity);
+        return ResponseEntity.ok(userLoginResponseDto);
+    }
     @GetMapping("me")
     public ResponseEntity<User> getMethodName(Authentication authentication) {
         int userId = Integer.parseInt((String) authentication.getPrincipal());
