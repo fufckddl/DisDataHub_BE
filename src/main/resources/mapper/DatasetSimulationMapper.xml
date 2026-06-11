@@ -29,6 +29,15 @@
             and d.deleted_at is null
     </select>
 
+    <select id="countDatasetFeatures"
+            parameterType="java.lang.Long"
+            resultType="java.lang.Integer">
+        select count(*)::int
+        from sd_gis_feature
+        where dataset_id = #{datasetId}
+            and geom_4326 is not null
+    </select>
+
     <select id="findDatasetOwnerOrganization"
             parameterType="java.lang.Long"
             resultType="java.lang.String">
@@ -47,35 +56,37 @@
     </select>
 
     <sql id="pointSimulationBaseCte">
-        with point_features as (
+        with selected_point as (
+            select ST_SetSRID(ST_MakePoint(#{lng}, #{lat}), 4326) as geom_4326
+        ),
+        point_features as (
             select
                 f.feature_id,
                 f.feature_name,
-                f.geom_4326
+                ST_PointOnSurface(f.geom_4326) as geom_4326
             from sd_gis_feature f
             where f.dataset_id = #{datasetId}
                 and f.geom_4326 is not null
                 and upper(coalesce(f.spatial_type, '')) like '%POINT%'
         ),
-        neighbor_counts as (
+        matched_raw as (
             select
-                base.feature_id,
-                base.feature_name,
-                base.geom_4326,
-                greatest(count(target.feature_id) - 1, 0)::int as nearby_count
-            from point_features base
-            join point_features target
-                on ST_DWithin(base.geom_4326::geography, target.geom_4326::geography, #{radius})
-            group by base.feature_id, base.feature_name, base.geom_4326
+                pf.feature_id,
+                pf.feature_name,
+                pf.geom_4326,
+                ST_Distance(pf.geom_4326::geography, sp.geom_4326::geography) as distance_meters
+            from point_features pf
+            cross join selected_point sp
+            where ST_DWithin(pf.geom_4326::geography, sp.geom_4326::geography, #{radius})
         ),
         ranked as (
             select
-                row_number() over (order by nearby_count desc, feature_id asc)::int as rank,
+                row_number() over (order by distance_meters asc, feature_id asc)::int as rank,
                 feature_id,
                 feature_name,
                 geom_4326,
-                nearby_count
-            from neighbor_counts
+                round(distance_meters::numeric, 2)::double precision as distance_meters
+            from matched_raw
         )
     </sql>
 
@@ -86,12 +97,15 @@
             #{datasetId} as dataset_id,
             d.title as dataset_title,
             #{radius} as radius,
-            count(r.feature_id)::int as total_point_count,
-            count(case when r.nearby_count > 0 then 1 end)::int as hotspot_count,
-            coalesce(round(avg(r.nearby_count)::numeric, 2), 0)::double precision as average_nearby_count,
-            coalesce(max(r.nearby_count), 0)::int as max_nearby_count
-        from ranked r
-        cross join sd_gis_dataset d
+            (select count(*)::int from point_features) as total_point_count,
+            count(r.feature_id)::int as matched_point_count,
+            count(r.feature_id)::int as hotspot_count,
+            coalesce(round(avg(r.distance_meters)::numeric, 2), 0)::double precision as average_distance_meters,
+            coalesce(round(min(r.distance_meters)::numeric, 2), 0)::double precision as nearest_distance_meters,
+            coalesce(round(avg(r.distance_meters)::numeric, 2), 0)::double precision as average_nearby_count,
+            coalesce(round(max(r.distance_meters))::int, 0) as max_nearby_count
+        from sd_gis_dataset d
+        left join ranked r on true
         where d.dataset_id = #{datasetId}
         group by d.title
     </select>
@@ -103,9 +117,10 @@
             r.rank,
             r.feature_id,
             coalesce(r.feature_name, concat('Feature ', r.feature_id)) as feature_name,
-            r.nearby_count,
-            round(ST_Y(r.geom_4326)::numeric, 6)::double precision as latitude,
-            round(ST_X(r.geom_4326)::numeric, 6)::double precision as longitude
+            0 as nearby_count,
+            round(ST_Y(ST_PointOnSurface(r.geom_4326))::numeric, 6)::double precision as latitude,
+            round(ST_X(ST_PointOnSurface(r.geom_4326))::numeric, 6)::double precision as longitude,
+            r.distance_meters
         from ranked r
         order by r.rank
         limit #{limit}
@@ -114,28 +129,36 @@
     <select id="findPointRadiusSimulationGeoJson"
             resultType="java.lang.String">
         <include refid="pointSimulationBaseCte"/>
-        select jsonb_build_object(
-            'type', 'FeatureCollection',
-            'features', coalesce(jsonb_agg(
-                jsonb_build_object(
-                    'type', 'Feature',
-                    'geometry', ST_AsGeoJSON(ST_Buffer(r.geom_4326::geography, #{radius})::geometry, 5)::jsonb,
-                    'properties', jsonb_build_object(
-                        'rank', r.rank,
-                        'featureId', r.feature_id,
-                        'name', coalesce(r.feature_name, concat('Feature ', r.feature_id)),
-                        'nearbyCount', r.nearby_count,
-                        'radius', #{radius}
-                    )
-                )
-            ), '[]'::jsonb)
-        )::text
-        from (
+        ,
+        selected_results as (
             select *
             from ranked
             order by rank
             limit #{limit}
-        ) r
+        )
+        select jsonb_build_object(
+            'type', 'FeatureCollection',
+            'features', coalesce(jsonb_agg(feature order by rank), '[]'::jsonb)
+        )::text
+        from (
+            select
+                r.rank,
+                jsonb_build_object(
+                    'type', 'Feature',
+                    'geometry', ST_AsGeoJSON(r.geom_4326, 6)::jsonb,
+                    'properties', jsonb_build_object(
+                        'layerType', 'resultPoint',
+                        'rank', r.rank,
+                        'featureId', r.feature_id,
+                        'name', coalesce(r.feature_name, concat('Feature ', r.feature_id)),
+                        'distanceMeters', r.distance_meters,
+                        'radius', #{radius},
+                        'selectedLat', #{lat},
+                        'selectedLng', #{lng}
+                    )
+                ) as feature
+            from selected_results r
+        ) result_features
     </select>
 
     <select id="calculatePolygonAreaSquareMeters"

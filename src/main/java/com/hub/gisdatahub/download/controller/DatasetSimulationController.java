@@ -1,11 +1,14 @@
 package com.hub.gisdatahub.download.controller;
 
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
 
 import com.hub.gisdatahub.download.dto.PointRadiusSimulationRequestDto;
 import com.hub.gisdatahub.download.dto.PointRadiusSimulationResponseDto;
@@ -21,6 +24,15 @@ public class DatasetSimulationController {
 
     public DatasetSimulationController(DatasetSimulationService datasetSimulationService) {
         this.datasetSimulationService = datasetSimulationService;
+    }
+
+    @GetMapping("/datasets/{datasetId}/summary")
+    public Map<String, Object> getDatasetSimulationSummary(
+            @PathVariable("datasetId") Long datasetId,
+            Authentication authentication
+    ) {
+        Integer userId = resolveAuthenticatedUserId(authentication);
+        return datasetSimulationService.getDatasetSimulationSummary(datasetId, userId);
     }
 
     @PostMapping("/datasets/{datasetId}/point-radius")
