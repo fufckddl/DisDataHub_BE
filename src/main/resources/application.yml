@@ -19,6 +19,11 @@ jwt:
   secret: ${JWT_SECRET}
   expiration: ${JWT_EXPIRATION}
 
+dashboard:
+  gis:
+    daily-collect-enabled: ${DASHBOARD_GIS_DAILY_COLLECT_ENABLED:true}
+    daily-collect-cron: ${DASHBOARD_GIS_DAILY_COLLECT_CRON:0 0 0 * * *}
+
 seoul:
   open-api:
     key: ${SEOUL_OPENDATA_KEY:}

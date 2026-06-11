@@ -32,6 +32,7 @@ public class DataCollectClient {
     private final RestClient standardDataRestClient;
     private final RestClient calspiaRestClient;
     private final String seoulKey;
+    private final String moisBaseUrl;
     private final String moisKey;
     private final String publicDataKey;
     private final String calspiaKey;
@@ -47,6 +48,7 @@ public class DataCollectClient {
         @Value("${CALSPIA_OPEN_API_KEY:}") String calspiaKey
     ){
         this.seoulKey = seoulKey;
+        this.moisBaseUrl = moisBaseUrl;
         this.moisKey = resolveValue(moisKey, "MOIS_OPEN_API_KEY");
         this.publicDataKey = this.moisKey;
         this.calspiaKey = resolveValue(calspiaKey, "CALSPIA_OPEN_API_KEY");
@@ -85,21 +87,21 @@ public class DataCollectClient {
             throw new IllegalStateException("MOIS_OPEN_API_KEY 환경변수가 설정되지 않았습니다.");
         }
 
-        return moisRestClient.get()
-                .uri(uriBuilder -> uriBuilder
-                        .path(MOIS_RESIDENT_POPULATION_PATH)
-                        .queryParam("serviceKey", moisKey)
-                        .queryParam("admmCd", admmCd)
-                        .queryParam("srchFrYm", srchFrYm)
-                        .queryParam("srchToYm", srchToYm)
-                        .queryParam("lv", level)
-                        .queryParam("regSeCd", regSeCd)
-                        .queryParam("type", "JSON")
-                        .queryParam("numOfRows", numOfRows)
-                        .queryParam("pageNo", pageNo)
-                        .build())
-                .retrieve()
-                .body(String.class);
+        return callOpenApi(
+                moisBaseUrl,
+                MOIS_RESIDENT_POPULATION_PATH,
+                Map.of(
+                        "serviceKey", moisKey,
+                        "admmCd", admmCd,
+                        "srchFrYm", srchFrYm,
+                        "srchToYm", srchToYm,
+                        "lv", level,
+                        "regSeCd", regSeCd,
+                        "type", "JSON",
+                        "numOfRows", numOfRows,
+                        "pageNo", pageNo),
+                MOIS_CONNECT_TIMEOUT,
+                MOIS_READ_TIMEOUT);
     }
 
     public String callDataGoKrOpenApi(String path, Map<String, ?> queryParams) {
