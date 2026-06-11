@@ -1,7 +1,9 @@
 package com.hub.gisdatahub.download.service;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.StringJoiner;
 
@@ -21,10 +23,30 @@ import com.hub.gisdatahub.download.mapper.DatasetSimulationMapper;
 @Service
 public class DatasetSimulationService {
 
+    private static final int TABLE_RESULT_LIMIT = 500;
+    private static final int MAP_RESULT_LIMIT = 500;
+    private static final int MAX_RADIUS_METERS = 5000;
+
     private final DatasetSimulationMapper datasetSimulationMapper;
 
     public DatasetSimulationService(DatasetSimulationMapper datasetSimulationMapper) {
         this.datasetSimulationMapper = datasetSimulationMapper;
+    }
+
+    public Map<String, Object> getDatasetSimulationSummary(Long datasetId, Integer userId) {
+        DownloadDatasetDetailDto dataset = datasetSimulationMapper.findDatasetDetailById(datasetId);
+        if (dataset == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "데이터셋을 찾을 수 없습니다.");
+        }
+
+        validateDatasetDetailAccess(dataset, userId);
+
+        Integer totalFeatureCount = datasetSimulationMapper.countDatasetFeatures(datasetId);
+        Map<String, Object> response = new HashMap<>();
+        response.put("datasetId", datasetId);
+        response.put("totalFeatureCount", totalFeatureCount == null ? 0 : totalFeatureCount);
+        response.put("spatialType", dataset.getSpatialType());
+        return response;
     }
 
     public PointRadiusSimulationResponseDto runPointRadiusSimulation(
@@ -41,8 +63,10 @@ public class DatasetSimulationService {
         validatePointSimulationRequest(dataset, requestDto);
 
         Integer radius = requestDto.getRadius();
+        Double lat = requestDto.getLat();
+        Double lng = requestDto.getLng();
         PointRadiusSimulationSummaryDto summary =
-                datasetSimulationMapper.findPointRadiusSimulationSummary(datasetId, radius);
+                datasetSimulationMapper.findPointRadiusSimulationSummary(datasetId, radius, lat, lng);
 
         if (summary == null || summary.getTotalPointCount() == null || summary.getTotalPointCount() == 0) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "시뮬레이션할 Point 공간 데이터가 없습니다.");
@@ -50,9 +74,9 @@ public class DatasetSimulationService {
 
         PointRadiusSimulationResponseDto response = new PointRadiusSimulationResponseDto();
         response.setSummary(summary);
-        response.setTable(datasetSimulationMapper.findPointRadiusSimulationTable(datasetId, radius, 5));
+        response.setTable(datasetSimulationMapper.findPointRadiusSimulationTable(datasetId, radius, lat, lng, TABLE_RESULT_LIMIT));
 
-        String resultGeoJson = datasetSimulationMapper.findPointRadiusSimulationGeoJson(datasetId, radius, 5);
+        String resultGeoJson = datasetSimulationMapper.findPointRadiusSimulationGeoJson(datasetId, radius, lat, lng, MAP_RESULT_LIMIT);
         response.setResultGeoJson(
                 resultGeoJson != null ? resultGeoJson : "{\"type\":\"FeatureCollection\",\"features\":[]}"
         );
@@ -108,8 +132,21 @@ public class DatasetSimulationService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "반경(radius)은 필수입니다.");
         }
 
+        if (requestDto.getLat() == null || requestDto.getLng() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "기준 지점 좌표는 필수입니다.");
+        }
+
         if (requestDto.getRadius() <= 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "반경(radius)은 0보다 커야 합니다.");
+        }
+
+        if (requestDto.getRadius() > MAX_RADIUS_METERS) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "반경(radius)은 " + MAX_RADIUS_METERS + "m 이하로 설정해주세요.");
+        }
+
+        if (requestDto.getLat() < -90 || requestDto.getLat() > 90
+                || requestDto.getLng() < -180 || requestDto.getLng() > 180) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "기준 지점 좌표가 올바르지 않습니다.");
         }
 
         if (!Boolean.TRUE.equals(dataset.getIsSpatial())) {

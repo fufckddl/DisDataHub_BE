@@ -363,6 +363,7 @@
             file_id,
             user_id,
             download_format,
+            download_file_size,
             download_status,
             error_message,
             download_ip
@@ -372,6 +373,7 @@
             #{fileId},
             #{userId},
             #{downloadFormat},
+            #{downloadFileSize},
             #{downloadStatus},
             #{errorMessage},
             #{downloadIp}

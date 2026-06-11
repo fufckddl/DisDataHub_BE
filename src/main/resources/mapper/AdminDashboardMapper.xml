@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+    PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.hub.gisdatahub.admin.mapper.AdminDashboardMapper">
+
+    <select id="getDashboardSummary"
+            resultType="com.hub.gisdatahub.admin.dto.AdminDashboardSummaryDto">
+
+        SELECT
+
+            (
+                SELECT COUNT(*)
+                FROM sd_user
+            ) AS totalUserCount,
+
+            (
+                SELECT COUNT(*)
+                FROM sd_gis_dataset
+            ) AS totalDatasetCount,
+
+            (
+                SELECT COUNT(*)
+                FROM sd_gis_dataset
+                WHERE status = 'REQUEST'
+            ) AS uploadRequestCount,
+
+            (
+                SELECT COUNT(*)
+                FROM sd_download_log
+                WHERE upper(coalesce(download_status, 'SUCCESS')) = 'SUCCESS'
+            ) AS downloadCount
+
+    </select>
+
+</mapper>

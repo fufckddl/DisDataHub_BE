@@ -14,24 +14,32 @@ public interface DatasetSimulationMapper {
 
     DownloadDatasetDetailDto findDatasetDetailById(Long datasetId);
 
+    Integer countDatasetFeatures(Long datasetId);
+
     String findDatasetOwnerOrganization(Long datasetId);
 
     String findUserOrganization(Integer userId);
 
     PointRadiusSimulationSummaryDto findPointRadiusSimulationSummary(
             @Param("datasetId") Long datasetId,
-            @Param("radius") Integer radius
+            @Param("radius") Integer radius,
+            @Param("lat") Double lat,
+            @Param("lng") Double lng
     );
 
     List<PointRadiusSimulationTableRowDto> findPointRadiusSimulationTable(
             @Param("datasetId") Long datasetId,
             @Param("radius") Integer radius,
+            @Param("lat") Double lat,
+            @Param("lng") Double lng,
             @Param("limit") Integer limit
     );
 
     String findPointRadiusSimulationGeoJson(
             @Param("datasetId") Long datasetId,
             @Param("radius") Integer radius,
+            @Param("lat") Double lat,
+            @Param("lng") Double lng,
             @Param("limit") Integer limit
     );
 

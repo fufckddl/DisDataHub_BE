@@ -55,4 +55,20 @@ public class SystemSettingController {
 
         return response;
     }
+
+    @GetMapping("logList")
+    public Map<String, Object> logList() {
+
+        Map<String, Object> response = new HashMap<>();
+
+        List<SystemSettingConfigLogDto> systemSettingConfigLogList =
+            systemSettingService.getSystemSettingConfigLogList();
+
+        response.put("systemSettingConfigLogList",
+            systemSettingConfigLogList);
+
+        response.put("result", "success");
+
+        return response;
+    }
 }

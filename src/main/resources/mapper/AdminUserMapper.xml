@@ -5,57 +5,78 @@
 
 <mapper namespace="com.hub.gisdatahub.admin.mapper.AdminUserMapper">
 
-<resultMap id="userResultMap" type="com.hub.gisdatahub.user.domain.User">
-    <id property="id" column="user_id" />
-    <result property="accountName" column="account_name" />
-    <result property="password" column="password" />
-    <result property="username" column="username" />
-    <result property="role" column="role" />
-    <result property="gender" column="gender" />
-    <result property="email" column="email" />
-    <result property="organization" column="organization" />
-    <result property="department" column="department" />
-    <result property="status" column="status" />
-    <result property="updated_at" column="updated_at" />
-    <result property="deleted_at" column="deleted_at" />
-    <result property="created_at" column="created_at" />
-</resultMap>
+    <resultMap id="userResultMap" type="com.hub.gisdatahub.user.domain.User">
+        <id property="id" column="user_id" />
+        <result property="accountName" column="account_name" />
+        <result property="password" column="password" />
+        <result property="username" column="username" />
+        <result property="role" column="role" />
+        <result property="gender" column="gender" />
+        <result property="email" column="email" />
+        <result property="organization" column="organization" />
+        <result property="department" column="department" />
+        <result property="status" column="status" />
+        <result property="updated_at" column="updated_at" />
+        <result property="deleted_at" column="deleted_at" />
+        <result property="created_at" column="created_at" />
+    </resultMap>
 
-<select id="findUserAll" resultMap="userResultMap">
-    SELECT *
-    FROM sd_user su
-    ORDER BY su.user_id ASC
-</select>
+    <select id="findUserAll" resultMap="userResultMap">
+        SELECT *
+        FROM sd_user su
+        ORDER BY su.user_id ASC
+    </select>
 
-<select id="findUserById" resultMap="userResultMap">
-    SELECT *
-    FROM sd_user su
-    WHERE su.user_id = #{id}
-</select>
+    <select id="findUserById" resultMap="userResultMap">
+        SELECT *
+        FROM sd_user su
+        WHERE su.user_id = #{id}
+    </select>
 
-<select id="findUserManagementTypeList">
-    select * from sd_user_management_type sumt
-</select>
+    <select id="findUserManagementTypeList">
+        select * from sd_user_management_type sumt
+    </select>
 
-<update id="updateUserStatus">
-    update sd_user su
-    set status = CAST(#{status} AS sd_user_status)
-    where su.user_id = #{id}
-</update>
+    <update id="updateUserStatus">
+        update sd_user su
+        set status = CAST(#{status} AS sd_user_status)
+        where su.user_id = #{id}
+    </update>
 
-<insert id="insertUserManagementLog">
-    insert into sd_user_management_log (
-        admin_user_id,
-        target_user_id,
-        type_id,
-        description
-    )
-    values (
-        #{adminUserId},
-        #{targetUserId},
-        #{typeId},
-        #{description}
-    )
-</insert>
+    <insert id="insertUserManagementLog">
+        insert into sd_user_management_log (
+            admin_user_id,
+            target_user_id,
+            type_id,
+            description
+        )
+        values (
+            #{adminUserId},
+            #{targetUserId},
+            #{typeId},
+            #{description}
+        )
+    </insert>
+
+    <select id="findUserManagementLogList" resultType="com.hub.gisdatahub.admin.dto.UserManagementLogDto">
+        SELECT
+            uml.log_id AS logId,
+            uml.admin_user_id AS adminUserId,
+            uml.target_user_id AS targetUserId,
+            uml.type_id AS typeId,
+            uml.description AS description,
+            uml.created_at AS createdAt,
+            admin_user.username AS adminUsername,
+            target_user.username AS targetUsername,
+            umt.type_name AS typeName
+        FROM sd_user_management_log uml
+        LEFT JOIN sd_user admin_user
+            ON uml.admin_user_id = admin_user.user_id
+        LEFT JOIN sd_user target_user
+            ON uml.target_user_id = target_user.user_id
+        LEFT JOIN sd_user_management_type umt
+            ON uml.type_id = umt.type_id
+        ORDER BY uml.log_id DESC
+    </select>
 
 </mapper>

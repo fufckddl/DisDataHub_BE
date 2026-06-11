@@ -24,7 +24,7 @@
         WHERE board_type_code = 'NOTICE'
           AND visibility_status = 'PUBLIC'
           AND deleted_yn = 'N'
-        ORDER BY pinned_yn DESC, created_at DESC
+        ORDER BY pinned_yn DESC, created_at DESC, post_id DESC
     </select>
 
     <!-- 사용자 공지사항 상세 조회 -->
@@ -48,6 +48,58 @@
           AND board_type_code = 'NOTICE'
           AND visibility_status = 'PUBLIC'
           AND deleted_yn = 'N'
+    </select>
+
+    <!-- 사용자 공지사항 이전글 -->
+    <select id="findPreviousNoticePostId"
+            parameterType="long"
+            resultType="long">
+        WITH notice_list AS (
+            SELECT
+                post_id,
+                ROW_NUMBER() OVER (
+                    ORDER BY pinned_yn DESC, created_at DESC, post_id DESC
+                ) AS rn
+            FROM sd_board_post
+            WHERE board_type_code = 'NOTICE'
+              AND visibility_status = 'PUBLIC'
+              AND deleted_yn = 'N'
+        ),
+        current_notice AS (
+            SELECT rn
+            FROM notice_list
+            WHERE post_id = #{postId}
+        )
+        SELECT notice_list.post_id
+        FROM notice_list, current_notice
+        WHERE notice_list.rn = current_notice.rn - 1
+        LIMIT 1
+    </select>
+
+    <!-- 사용자 공지사항 다음글 -->
+    <select id="findNextNoticePostId"
+            parameterType="long"
+            resultType="long">
+        WITH notice_list AS (
+            SELECT
+                post_id,
+                ROW_NUMBER() OVER (
+                    ORDER BY pinned_yn DESC, created_at DESC, post_id DESC
+                ) AS rn
+            FROM sd_board_post
+            WHERE board_type_code = 'NOTICE'
+              AND visibility_status = 'PUBLIC'
+              AND deleted_yn = 'N'
+        ),
+        current_notice AS (
+            SELECT rn
+            FROM notice_list
+            WHERE post_id = #{postId}
+        )
+        SELECT notice_list.post_id
+        FROM notice_list, current_notice
+        WHERE notice_list.rn = current_notice.rn + 1
+        LIMIT 1
     </select>
 
     <!-- 사용자 공지사항 상세 조회 시 조회수 증가 -->
@@ -105,10 +157,11 @@
         ORDER BY
             deleted_yn ASC,
             pinned_yn DESC,
-            created_at DESC
+            created_at DESC,
+            post_id DESC
     </select>
 
-    <!-- 관리자 공지사항 상세 조회 -->
+    <!-- 관리자 공지사항 상세 조회: 삭제된 게시글도 조회 가능 -->
     <select id="findByAdminDetailPage"
             parameterType="long"
             resultType="com.hub.gisdatahub.board.dto.BoardPostDto">
@@ -129,7 +182,55 @@
           AND board_type_code = 'NOTICE'
     </select>
 
-    <!-- 공지사항 수정 -->
+    <!-- 관리자 공지사항 이전글 -->
+    <select id="findPreviousAdminNoticePostId"
+            parameterType="long"
+            resultType="long">
+        WITH notice_list AS (
+            SELECT
+                post_id,
+                ROW_NUMBER() OVER (
+                    ORDER BY deleted_yn ASC, pinned_yn DESC, created_at DESC, post_id DESC
+                ) AS rn
+            FROM sd_board_post
+            WHERE board_type_code = 'NOTICE'
+        ),
+        current_notice AS (
+            SELECT rn
+            FROM notice_list
+            WHERE post_id = #{postId}
+        )
+        SELECT notice_list.post_id
+        FROM notice_list, current_notice
+        WHERE notice_list.rn = current_notice.rn - 1
+        LIMIT 1
+    </select>
+
+    <!-- 관리자 공지사항 다음글 -->
+    <select id="findNextAdminNoticePostId"
+            parameterType="long"
+            resultType="long">
+        WITH notice_list AS (
+            SELECT
+                post_id,
+                ROW_NUMBER() OVER (
+                    ORDER BY deleted_yn ASC, pinned_yn DESC, created_at DESC, post_id DESC
+                ) AS rn
+            FROM sd_board_post
+            WHERE board_type_code = 'NOTICE'
+        ),
+        current_notice AS (
+            SELECT rn
+            FROM notice_list
+            WHERE post_id = #{postId}
+        )
+        SELECT notice_list.post_id
+        FROM notice_list, current_notice
+        WHERE notice_list.rn = current_notice.rn + 1
+        LIMIT 1
+    </select>
+
+    <!-- 공지사항 수정: 정상 게시글만 수정 가능 -->
     <update id="updateNoticePost"
             parameterType="com.hub.gisdatahub.board.dto.BoardPostDto">
         UPDATE sd_board_post
@@ -154,6 +255,18 @@
         WHERE post_id = #{postId}
           AND board_type_code = 'NOTICE'
           AND deleted_yn = 'N'
+    </update>
+
+    <!-- 공지사항 삭제 취소 -->
+    <update id="restoreNoticePost"
+            parameterType="long">
+        UPDATE sd_board_post
+        SET
+            deleted_yn = 'N',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE post_id = #{postId}
+          AND board_type_code = 'NOTICE'
+          AND deleted_yn = 'Y'
     </update>
 
 </mapper>

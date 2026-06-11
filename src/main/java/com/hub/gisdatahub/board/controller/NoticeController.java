@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -49,7 +50,17 @@ public class NoticeController {
 
         BoardPostDto noticeDetail = noticeService.getNoticeDetailData(postId);
 
+        Long previousPostId = null;
+        Long nextPostId = null;
+
+        if (noticeDetail != null) {
+            previousPostId = noticeService.getPreviousNoticePostId(postId);
+            nextPostId = noticeService.getNextNoticePostId(postId);
+        }
+
         response.put("noticeDetail", noticeDetail);
+        response.put("previousPostId", previousPostId);
+        response.put("nextPostId", nextPostId);
         response.put("result", "success");
 
         return response;
@@ -100,7 +111,17 @@ public class NoticeController {
 
         BoardPostDto adminNoticeDetail = noticeService.getAdminNoticeDetailData(postId);
 
+        Long previousPostId = null;
+        Long nextPostId = null;
+
+        if (adminNoticeDetail != null) {
+            previousPostId = noticeService.getPreviousAdminNoticePostId(postId);
+            nextPostId = noticeService.getNextAdminNoticePostId(postId);
+        }
+
         response.put("adminNoticeDetail", adminNoticeDetail);
+        response.put("previousPostId", previousPostId);
+        response.put("nextPostId", nextPostId);
         response.put("result", "success");
 
         return response;
@@ -139,5 +160,11 @@ public class NoticeController {
         response.put("result", "success");
 
         return response;
+    }
+
+
+    @PatchMapping("/{postId}/restore")
+    public Map<String, Object> restoreNoticePost(@PathVariable Long postId) {
+        return noticeService.restoreNoticePost(postId);
     }
 }

@@ -10,4 +10,5 @@ public class PointRadiusSimulationTableRowDto {
     private Integer nearbyCount;
     private Double latitude;
     private Double longitude;
+    private Double distanceMeters;
 }

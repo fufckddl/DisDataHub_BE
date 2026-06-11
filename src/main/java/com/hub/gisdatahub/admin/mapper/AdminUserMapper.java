@@ -22,5 +22,6 @@ public interface AdminUserMapper {
     public void updateUserStatus(@Param("id") Integer id, @Param("status") String status);
     
     // 사용자 제제 로그
-    public void insertUserManagementLog(UserManagementLogDto userManagementLogDto); 
+    public void insertUserManagementLog(UserManagementLogDto userManagementLogDto);
+    public List<UserManagementLogDto> findUserManagementLogList();
 }

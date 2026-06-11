@@ -344,7 +344,6 @@
           AND deleted_yn = 'N'
     </update>
 
-
     <!-- 사용자 GIS 오류제보 검색/마커 목록 조회 -->
     <select id="findGisReportSearchList"
             parameterType="com.hub.gisdatahub.board.dto.GisReportSearchRequestDto"
@@ -381,8 +380,8 @@
         LEFT JOIN sd_user u
             ON bp.user_id = u.user_id
         WHERE bp.board_type_code = 'GIS_REPORT'
-        AND bp.deleted_yn = 'N'
-        AND bp.visibility_status = 'PUBLIC'
+          AND bp.deleted_yn = 'N'
+          AND bp.visibility_status = 'PUBLIC'
 
         <if test="searchWord != null and searchWord != ''">
             AND (
@@ -390,6 +389,9 @@
                 OR bp.content ILIKE CONCAT('%', #{searchWord}, '%')
                 OR grd.address ILIKE CONCAT('%', #{searchWord}, '%')
                 OR grd.target_data_name ILIKE CONCAT('%', #{searchWord}, '%')
+                OR grd.sido ILIKE CONCAT('%', #{searchWord}, '%')
+                OR grd.sigungu ILIKE CONCAT('%', #{searchWord}, '%')
+                OR grd.eupmyeondong ILIKE CONCAT('%', #{searchWord}, '%')
             )
         </if>
 
@@ -406,17 +408,178 @@
         </if>
 
         <if test="sido != null and sido != ''">
-            AND grd.sido = #{sido}
+            AND (
+                grd.sido = #{sido}
+                OR grd.address ILIKE CONCAT('%', #{sido}, '%')
+
+                OR grd.sigungu IN (
+                    SELECT sigungu_region.name
+                    FROM region_code sigungu_region
+                    INNER JOIN region_code sido_region
+                        ON sigungu_region.parent_code = sido_region.code
+                    WHERE sido_region.depth = 1
+                      AND sigungu_region.depth = 2
+                      AND sido_region.use_yn = 'Y'
+                      AND sigungu_region.use_yn = 'Y'
+                      AND sido_region.name = #{sido}
+                )
+
+                OR grd.eupmyeondong IN (
+                    SELECT dong_region.name
+                    FROM region_code dong_region
+                    INNER JOIN region_code sigungu_region
+                        ON dong_region.parent_code = sigungu_region.code
+                    INNER JOIN region_code sido_region
+                        ON sigungu_region.parent_code = sido_region.code
+                    WHERE sido_region.depth = 1
+                      AND sigungu_region.depth = 2
+                      AND dong_region.depth = 3
+                      AND sido_region.use_yn = 'Y'
+                      AND sigungu_region.use_yn = 'Y'
+                      AND dong_region.use_yn = 'Y'
+                      AND sido_region.name = #{sido}
+                )
+
+                OR EXISTS (
+                    SELECT 1
+                    FROM region_code dong_region
+                    INNER JOIN region_code sigungu_region
+                        ON dong_region.parent_code = sigungu_region.code
+                    INNER JOIN region_code sido_region
+                        ON sigungu_region.parent_code = sido_region.code
+                    WHERE sido_region.depth = 1
+                      AND sigungu_region.depth = 2
+                      AND dong_region.depth = 3
+                      AND sido_region.use_yn = 'Y'
+                      AND sigungu_region.use_yn = 'Y'
+                      AND dong_region.use_yn = 'Y'
+                      AND sido_region.name = #{sido}
+                      AND grd.address ILIKE CONCAT('%', dong_region.name, '%')
+                )
+            )
         </if>
 
         <if test="sigungu != null and sigungu != ''">
-            AND grd.sigungu = #{sigungu}
+            AND (
+                grd.sigungu = #{sigungu}
+                OR grd.address ILIKE CONCAT('%', #{sigungu}, '%')
+
+                OR grd.eupmyeondong IN (
+                    SELECT dong_region.name
+                    FROM region_code dong_region
+                    INNER JOIN region_code sigungu_region
+                        ON dong_region.parent_code = sigungu_region.code
+                    INNER JOIN region_code sido_region
+                        ON sigungu_region.parent_code = sido_region.code
+                    WHERE sigungu_region.depth = 2
+                      AND dong_region.depth = 3
+                      AND sido_region.depth = 1
+                      AND sigungu_region.use_yn = 'Y'
+                      AND dong_region.use_yn = 'Y'
+                      AND sido_region.use_yn = 'Y'
+                      AND sigungu_region.name = #{sigungu}
+                      <if test="sido != null and sido != ''">
+                          AND sido_region.name = #{sido}
+                      </if>
+                )
+
+                OR EXISTS (
+                    SELECT 1
+                    FROM region_code dong_region
+                    INNER JOIN region_code sigungu_region
+                        ON dong_region.parent_code = sigungu_region.code
+                    INNER JOIN region_code sido_region
+                        ON sigungu_region.parent_code = sido_region.code
+                    WHERE sigungu_region.depth = 2
+                      AND dong_region.depth = 3
+                      AND sido_region.depth = 1
+                      AND sigungu_region.use_yn = 'Y'
+                      AND dong_region.use_yn = 'Y'
+                      AND sido_region.use_yn = 'Y'
+                      AND sigungu_region.name = #{sigungu}
+                      <if test="sido != null and sido != ''">
+                          AND sido_region.name = #{sido}
+                      </if>
+                      AND grd.address ILIKE CONCAT('%', dong_region.name, '%')
+                )
+            )
         </if>
 
         <if test="eupmyeondong != null and eupmyeondong != ''">
-            AND grd.eupmyeondong = #{eupmyeondong}
+            AND (
+                grd.eupmyeondong = #{eupmyeondong}
+                OR grd.address ILIKE CONCAT('%', #{eupmyeondong}, '%')
+            )
         </if>
 
         ORDER BY bp.created_at DESC
+    </select>
+
+    <!-- GIS 오류제보 이전글: 현재 글보다 최신 글 -->
+    <select id="findPreviousGisReportPostId"
+            parameterType="long"
+            resultType="long">
+        SELECT bp.post_id
+        FROM sd_board_post bp
+        WHERE bp.board_type_code = 'GIS_REPORT'
+        AND bp.deleted_yn = 'N'
+        AND bp.visibility_status = 'PUBLIC'
+        AND bp.created_at &gt; (
+            SELECT current_post.created_at
+            FROM sd_board_post current_post
+            WHERE current_post.post_id = #{postId}
+        )
+        ORDER BY bp.created_at ASC
+        LIMIT 1
+    </select>
+
+    <!-- GIS 오류제보 다음글: 현재 글보다 오래된 글 -->
+    <select id="findNextGisReportPostId"
+            parameterType="long"
+            resultType="long">
+        SELECT bp.post_id
+        FROM sd_board_post bp
+        WHERE bp.board_type_code = 'GIS_REPORT'
+        AND bp.deleted_yn = 'N'
+        AND bp.visibility_status = 'PUBLIC'
+        AND bp.created_at &lt; (
+            SELECT current_post.created_at
+            FROM sd_board_post current_post
+            WHERE current_post.post_id = #{postId}
+        )
+        ORDER BY bp.created_at DESC
+        LIMIT 1
+    </select>
+
+    <!-- 관리자 GIS 오류제보 이전글: 현재 글보다 최신 글 -->
+    <select id="findPreviousAdminGisReportPostId"
+            parameterType="long"
+            resultType="long">
+        SELECT bp.post_id
+        FROM sd_board_post bp
+        WHERE bp.board_type_code = 'GIS_REPORT'
+        AND bp.created_at &gt; (
+            SELECT current_post.created_at
+            FROM sd_board_post current_post
+            WHERE current_post.post_id = #{postId}
+        )
+        ORDER BY bp.created_at ASC
+        LIMIT 1
+    </select>
+
+    <!-- 관리자 GIS 오류제보 다음글: 현재 글보다 오래된 글 -->
+    <select id="findNextAdminGisReportPostId"
+            parameterType="long"
+            resultType="long">
+        SELECT bp.post_id
+        FROM sd_board_post bp
+        WHERE bp.board_type_code = 'GIS_REPORT'
+        AND bp.created_at &lt; (
+            SELECT current_post.created_at
+            FROM sd_board_post current_post
+            WHERE current_post.post_id = #{postId}
+        )
+        ORDER BY bp.created_at DESC
+        LIMIT 1
     </select>
 </mapper>

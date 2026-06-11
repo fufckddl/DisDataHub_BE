@@ -18,6 +18,8 @@ public interface SystemSettingMapper {
     
     // 시스템 설정 변경 로그
     public Integer insertSystemSettingConfigLog(SystemSettingConfigLogDto systemSettingConfigLogDto);
+    public List<SystemSettingConfigLogDto> findSystemSettingConfigLogList();
 
+    // 시스템 세팅 조회
     public List<SystemSettingDto> findSystemSettingAll();
 }

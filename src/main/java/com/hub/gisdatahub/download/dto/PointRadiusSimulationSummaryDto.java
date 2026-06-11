@@ -11,4 +11,7 @@ public class PointRadiusSimulationSummaryDto {
     private Integer hotspotCount;
     private Double averageNearbyCount;
     private Integer maxNearbyCount;
+    private Integer matchedPointCount;
+    private Double averageDistanceMeters;
+    private Double nearestDistanceMeters;
 }

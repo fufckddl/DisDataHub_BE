@@ -64,6 +64,16 @@ public class InquiryServiceImpl implements InquiryService {
     }
 
     @Override
+    public Long getPreviousInquiryPostId(Long postId, Integer loginUserId) {
+        return inquirySqlMapper.findPreviousInquiryPostId(postId, loginUserId);
+    }
+
+    @Override
+    public Long getNextInquiryPostId(Long postId, Integer loginUserId) {
+        return inquirySqlMapper.findNextInquiryPostId(postId, loginUserId);
+    }
+
+    @Override
     public List<InquiryDetailDto> getAdminInquiryList() {
         return inquirySqlMapper.findAdminInquiryList();
     }
@@ -71,6 +81,16 @@ public class InquiryServiceImpl implements InquiryService {
     @Override
     public InquiryDetailDto getAdminInquiryDetail(Long postId) {
         return inquirySqlMapper.findAdminInquiryDetail(postId);
+    }
+
+    @Override
+    public Long getPreviousAdminInquiryPostId(Long postId) {
+        return inquirySqlMapper.findPreviousAdminInquiryPostId(postId);
+    }
+
+    @Override
+    public Long getNextAdminInquiryPostId(Long postId) {
+        return inquirySqlMapper.findNextAdminInquiryPostId(postId);
     }
 
     @Transactional

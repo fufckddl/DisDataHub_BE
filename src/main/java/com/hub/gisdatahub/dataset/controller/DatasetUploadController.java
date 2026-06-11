@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -130,6 +131,29 @@ public class DatasetUploadController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("내역을 불러오는 중 문제가 발생했습니다.");
         }
 
+    }
+
+    @DeleteMapping("/my-uploads/{datasetId}")
+    public ResponseEntity<?> deleteMyDataset(@PathVariable("datasetId") Long datasetId, Authentication authentication) {
+        System.out.println("[컨트롤러] 데이터 삭제 요청 수신 - Dataset ID: " + datasetId);
+
+        if (!isResearcher(authentication)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("삭제 권한이 없습니다.");
+        }
+
+        try {
+            int userId = Integer.parseInt((String) authentication.getPrincipal());
+
+            // 삭제 지시
+            datasetService.deleteMyDataset(datasetId, userId);
+
+            return ResponseEntity.ok("데이터셋이 성공적으로 삭제되었습니다.");
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getMessage());
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("삭제 중 서버 내부 오류가 발생했습니다.");
+        }
     }
 
 }

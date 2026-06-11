@@ -499,8 +499,26 @@ public class DatasetDownloadService {
             }
         }
 
-        recordDownloadSuccess(datasetId, sourceFile, userId, normalizedFormat, downloadIp);
+        result.setFileName(buildDownloadFileName(dataset.getTitle(), normalizedFormat));
+
+        Long downloadFileSize = result.getBytes() == null ? null : (long) result.getBytes().length;
+        recordDownloadSuccess(datasetId, sourceFile, userId, normalizedFormat, downloadFileSize, downloadIp);
         return result;
+    }
+
+    private String buildDownloadFileName(String datasetTitle, String normalizedFormat) {
+        String title = datasetTitle == null || datasetTitle.isBlank() ? "dataset" : datasetTitle.trim();
+        String format = normalizedFormat == null ? "" : normalizedFormat;
+        String extension = switch (format) {
+            case "GEOJSON" -> "geojson";
+            case "SHP" -> "zip";
+            case "XLSX" -> "xlsx";
+            case "CSV" -> "csv";
+            case "TIFF" -> "tiff";
+            default -> format.isBlank() ? "download" : format.toLowerCase(Locale.ROOT);
+        };
+
+        return title + "." + extension;
     }
 
     // 원본 파일 확장자를 버튼 형식과 비교하기 쉬운 형태로 맞춤
@@ -570,6 +588,7 @@ public class DatasetDownloadService {
             DownloadDatasetFileDto sourceFile,
             Integer userId,
             String format,
+            Long downloadFileSize,
             String downloadIp
     ) {
         DownloadLogDto logDto = new DownloadLogDto();
@@ -577,6 +596,7 @@ public class DatasetDownloadService {
         logDto.setFileId(sourceFile.getFileId());
         logDto.setUserId(userId);
         logDto.setDownloadFormat(format);
+        logDto.setDownloadFileSize(downloadFileSize);
         logDto.setDownloadStatus("SUCCESS");
         logDto.setErrorMessage(null);
         logDto.setDownloadIp(downloadIp);

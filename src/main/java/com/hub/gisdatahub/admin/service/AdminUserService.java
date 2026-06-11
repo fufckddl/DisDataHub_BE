@@ -16,4 +16,7 @@ public interface AdminUserService {
     // 사용자 제제
     public List<UserManagementTypeDto> getManagementTypeList();
     public void applyUserManagement(UserManagementLogDto userManagementLogDto, String status);
+    
+    // 사용자 제제 로그
+    public List<UserManagementLogDto> getUserManagementLogList();
 }

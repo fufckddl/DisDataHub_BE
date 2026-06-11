@@ -39,4 +39,9 @@ public class AdminUserServiceImpl implements AdminUserService {
         adminUserMapper.updateUserStatus(targetUserId, status);
         adminUserMapper.insertUserManagementLog(userManagementLogDto);
     }
+
+    @Override
+    public List<UserManagementLogDto> getUserManagementLogList() {
+        return adminUserMapper.findUserManagementLogList();
+    }
 }

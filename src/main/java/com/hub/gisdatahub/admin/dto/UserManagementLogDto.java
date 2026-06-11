@@ -10,6 +10,9 @@ public class UserManagementLogDto {
     private Integer adminUserId;
     private Integer targetUserId;
     private Integer typeId;
+    private String adminUsername;
+    private String targetUsername;
+    private String typeName;
     private String description;
     private LocalDateTime createdAt;
 }

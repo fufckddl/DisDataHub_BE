@@ -100,4 +100,7 @@ public interface DatasetMapper {
     // 관리자 시각화 검증 지도 전용 쿼리
     // 특정 업로드 간의 공간 데이터를 GeoJSON 형태로 모두 가져오기
     List<MapFeatureDto> selectMapFeaturesByUploadId(Long uploadId);
+
+    // 연구자 본인의 데이터셋 삭제 (CASCADE로 하위 테이블 동시 삭제)
+    void deleteDatasetByIdAndUserId(@Param("datasetId") Long datasetId, @Param("userId") int userId);
 }
