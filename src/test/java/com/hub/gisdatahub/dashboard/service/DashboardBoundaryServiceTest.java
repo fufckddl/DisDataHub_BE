@@ -327,7 +327,7 @@ class DashboardBoundaryServiceTest {
         when(jdbcTemplate.queryForObject(anyString(), any(MapSqlParameterSource.class), eq(String.class)))
                 .thenReturn("{\"type\":\"FeatureCollection\",\"features\":[]}");
 
-        service.getDashboardGisFeatures("KECO_EV_CHARGER_MAIN", null, "5013000000", 100);
+        service.getDashboardGisFeatures("STANDARD_BUS_STOP_MAIN", null, "5013000000", 100);
 
         ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<MapSqlParameterSource> paramsCaptor = ArgumentCaptor.forClass(MapSqlParameterSource.class);

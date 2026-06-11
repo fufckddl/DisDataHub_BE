@@ -114,51 +114,50 @@
 
     <select id="findMyRecentViewedDatasets"
             resultType="com.hub.gisdatahub.download.dto.DownloadDatasetListItemDto">
-        select
-            d.dataset_id,
-            d.title,
-            d.description,
-            d.provider,
-            d.category_id,
-            c.category_name_ko,
-            d.is_public,
-            max(v.created_at) as created_at,
-            f.file_extension,
-            coalesce(s.view_count, 0) as view_count,
-            coalesce(s.download_count, 0) as download_count
-        from sd_dataset_view_log v
-        inner join sd_gis_dataset d on v.dataset_id = d.dataset_id
-        left join sd_gis_dataset_file f on d.dataset_id = f.dataset_id and f.file_role = 'ORIGINAL'
-        left join sd_dataset_stat s on d.dataset_id = s.dataset_id
-        left join sd_data_category c on d.category_id = c.category_id
-        where v.user_id = #{userId}
-            and d.deleted_at is null
-        group by
-            d.dataset_id,
-            d.title,
-            d.description,
-            d.provider,
-            d.category_id,
-            c.category_name_ko,
-            d.is_public,
-            f.file_extension,
-            s.view_count,
-            s.download_count
-        order by max(v.created_at) desc
+        select *
+        from (
+            select distinct on (d.dataset_id)
+                d.dataset_id,
+                d.title,
+                d.description,
+                d.provider,
+                d.category_id,
+                c.category_name_ko,
+                d.is_public,
+                v.created_at,
+                f.file_extension,
+                coalesce(s.view_count, 0) as view_count,
+                coalesce(s.download_count, 0) as download_count
+            from sd_dataset_view_log v
+            inner join sd_gis_dataset d on v.dataset_id = d.dataset_id
+            left join sd_gis_dataset_file f on d.dataset_id = f.dataset_id and f.file_role = 'ORIGINAL'
+            left join sd_dataset_stat s on d.dataset_id = s.dataset_id
+            left join sd_data_category c on d.category_id = c.category_id
+            where v.user_id = #{userId}
+                and d.deleted_at is null
+            order by d.dataset_id, v.created_at desc
+        ) recent
+        order by created_at desc
         limit #{limit}
     </select>
 
     <select id="findMyDownloadFormatStats" resultType="map">
-        select
-            upper(replace(coalesce(l.download_format, f.file_extension, 'UNKNOWN'), '.', '')) as "format",
-            count(*) as "count"
-        from sd_download_log l
-        left join sd_gis_dataset_file f on l.file_id = f.file_id
-        where l.user_id = #{userId}
-            and upper(coalesce(l.download_status, 'SUCCESS')) = 'SUCCESS'
-            and l.created_at &gt;= #{periodStart}
-        group by upper(replace(coalesce(l.download_format, f.file_extension, 'UNKNOWN'), '.', ''))
-        order by count(*) desc
+        select "format", "count"
+        from (
+            select distinct on (download_format)
+                download_format as "format",
+                count(*) over (partition by download_format) as "count"
+            from (
+                select upper(replace(coalesce(l.download_format, f.file_extension, 'UNKNOWN'), '.', '')) as download_format
+                from sd_download_log l
+                left join sd_gis_dataset_file f on l.file_id = f.file_id
+                where l.user_id = #{userId}
+                    and upper(coalesce(l.download_status, 'SUCCESS')) = 'SUCCESS'
+                    and l.created_at &gt;= #{periodStart}
+            ) format_rows
+            order by download_format
+        ) stats
+        order by "count" desc
     </select>
 
     <select id="countMyDownloads" resultType="java.lang.Integer">
@@ -186,14 +185,22 @@
     </select>
 
     <select id="findMyMostUsedFormat" resultType="java.lang.String">
-        select upper(replace(coalesce(l.download_format, f.file_extension, 'UNKNOWN'), '.', '')) as download_format
-        from sd_download_log l
-        left join sd_gis_dataset_file f on l.file_id = f.file_id
-        where l.user_id = #{userId}
-            and upper(coalesce(l.download_status, 'SUCCESS')) = 'SUCCESS'
-            and l.created_at &gt;= #{periodStart}
-        group by upper(replace(coalesce(l.download_format, f.file_extension, 'UNKNOWN'), '.', ''))
-        order by count(*) desc, download_format asc
+        select download_format
+        from (
+            select distinct on (download_format)
+                download_format,
+                count(*) over (partition by download_format) as download_count
+            from (
+                select upper(replace(coalesce(l.download_format, f.file_extension, 'UNKNOWN'), '.', '')) as download_format
+                from sd_download_log l
+                left join sd_gis_dataset_file f on l.file_id = f.file_id
+                where l.user_id = #{userId}
+                    and upper(coalesce(l.download_status, 'SUCCESS')) = 'SUCCESS'
+                    and l.created_at &gt;= #{periodStart}
+            ) format_rows
+            order by download_format
+        ) stats
+        order by download_count desc, download_format asc
         limit 1
     </select>
 </mapper>

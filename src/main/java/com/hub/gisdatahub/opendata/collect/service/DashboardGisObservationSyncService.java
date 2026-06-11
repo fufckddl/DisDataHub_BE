@@ -101,6 +101,7 @@ public class DashboardGisObservationSyncService {
                 ) AS metric(metric_code, metric_name, numeric_value)
                 WHERE p.stats_ym = :statsYm
                   AND p.reg_se_cd = :regSeCd
+                  AND p.api_lv IN ('1', '2', '3')
                   AND metric.numeric_value IS NOT NULL
                 """, params);
 

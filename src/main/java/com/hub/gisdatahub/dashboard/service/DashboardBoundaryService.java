@@ -332,18 +332,29 @@ public class DashboardBoundaryService {
                       AND COALESCE(b.boundary_type, c.level) = c.level
                       AND b.geom IS NOT NULL
                 ),
-                collections AS (
+                requested_levels AS (
                     SELECT
-                        level,
+                        DISTINCT level
+                    FROM features
+                )
+                SELECT COALESCE(
+                    jsonb_object_agg(
+                        rl.level,
                         jsonb_build_object(
                             'type', 'FeatureCollection',
-                            'features', COALESCE(jsonb_agg(feature ORDER BY area_code), '[]'::jsonb)
-                        ) AS collection
-                    FROM features
-                    GROUP BY level
-                )
-                SELECT COALESCE(jsonb_object_agg(level, collection), '{}'::jsonb)::text
-                FROM collections
+                            'features', COALESCE(
+                                (
+                                    SELECT jsonb_agg(f.feature ORDER BY f.area_code)
+                                    FROM features f
+                                    WHERE f.level = rl.level
+                                ),
+                                '[]'::jsonb
+                            )
+                        )
+                    ),
+                    '{}'::jsonb
+                )::text
+                FROM requested_levels rl
                 """;
 
         String geoJsonByLevel = jdbcTemplate.queryForObject(
@@ -574,11 +585,24 @@ public class DashboardBoundaryService {
                         FROM public.sd_dashboard_area_observation o
                         WHERE o.dataset_code = d.dataset_code
                     ) AS observation_count,
-                    (
-                        SELECT COUNT(*)::int
-                        FROM public.sd_dashboard_geo_feature f
-                        WHERE f.dataset_code = d.dataset_code
-                    ) AS feature_count
+                    CASE d.dataset_code
+                        WHEN 'STANDARD_LIBRARY_MAIN' THEN (
+                            SELECT COUNT(*)::int
+                            FROM public.sd_dashboard_standard_library_feature f
+                            WHERE f.dataset_code = d.dataset_code
+                        )
+                        WHEN 'STANDARD_URBAN_PARK_MAIN' THEN (
+                            SELECT COUNT(*)::int
+                            FROM public.sd_dashboard_standard_urban_park_feature f
+                            WHERE f.dataset_code = d.dataset_code
+                        )
+                        WHEN 'STANDARD_BUS_STOP_MAIN' THEN (
+                            SELECT COUNT(*)::int
+                            FROM public.sd_dashboard_standard_bus_stop_feature f
+                            WHERE f.dataset_code = d.dataset_code
+                        )
+                        ELSE 0
+                    END AS feature_count
                 FROM public.sd_dashboard_dataset d
                 JOIN public.sd_dashboard_data_source s
                     ON s.source_code = d.source_code
@@ -646,6 +670,10 @@ public class DashboardBoundaryService {
         Set<String> scopeAreaCodes = resolvedAreaCode == null
                 ? Set.of()
                 : dashboardObservationScopeAreaCodes(resolvedAreaCode, selectedAreaMeta.orElse(null));
+        String featureTable = dashboardFeatureTable(resolvedDatasetCode);
+        if (featureTable == null) {
+            return emptyFeatureCollection();
+        }
         String bboxFilter = resolvedBbox == null
                 ? ""
                 : """
@@ -738,7 +766,7 @@ public class DashboardBoundaryService {
                             ELSE '{}'::jsonb
                         END
                     ) AS feature
-                    FROM public.sd_dashboard_geo_feature f
+                    FROM %s f
                     WHERE f.dataset_code = :datasetCode
                       AND f.longitude IS NOT NULL
                       AND f.latitude IS NOT NULL
@@ -752,7 +780,7 @@ public class DashboardBoundaryService {
                     'features', COALESCE(jsonb_agg(feature), '[]'::jsonb)
                 )::text
                 FROM features
-                """.formatted(bboxFilter, areaFilter);
+                """.formatted(featureTable, bboxFilter, areaFilter);
 
         MapSqlParameterSource params = new MapSqlParameterSource()
                 .addValue("datasetCode", resolvedDatasetCode)
@@ -779,12 +807,17 @@ public class DashboardBoundaryService {
 
     public DashboardGisRegionStatsResponse getDashboardGisRegionStats(String datasetCode) {
         String resolvedDatasetCode = normalizeRequired(datasetCode, "datasetCode는 필수입니다.");
+        String featureTable = dashboardFeatureTable(resolvedDatasetCode);
+        if (featureTable != null) {
+            return getDashboardPointFeatureRegionStats(resolvedDatasetCode, featureTable);
+        }
+
         if (!EV_CHARGER_DATASET_CODE.equals(resolvedDatasetCode)) {
             return DashboardGisRegionStatsResponse.builder()
                     .datasetCode(resolvedDatasetCode)
                     .totalCount(BigDecimal.ZERO)
                     .items(List.of())
-                    .notice("현재 전체 원천 건수 기준 시도별 통계는 전기차 충전소 데이터셋만 제공합니다.")
+                    .notice("현재 전체 원천 건수 기준 시도별 통계를 제공하지 않는 데이터셋입니다.")
                     .build();
         }
 
@@ -912,18 +945,155 @@ public class DashboardBoundaryService {
                 .build();
     }
 
+    private DashboardGisRegionStatsResponse getDashboardPointFeatureRegionStats(
+            String datasetCode,
+            String featureTable) {
+        String sql = """
+                WITH feature_rows AS (
+                    SELECT
+                        f.dataset_code,
+                        s.area_code,
+                        s.area_name,
+                        s.full_name,
+                        s.sido_code
+                    FROM %s f
+                    JOIN LATERAL (
+                        SELECT
+                            c.area_code,
+                            c.name AS area_name,
+                            c.full_name,
+                            c.sido_code
+                        FROM public.sd_area_code c
+                        WHERE c.level = 'SIDO'
+                          AND c.is_active = TRUE
+                          AND (
+                              f.source_area_code LIKE c.sido_code || '%%'
+                              OR f.source_area_name = c.name
+                              OR f.source_area_name = c.full_name
+                              OR f.source_area_name LIKE c.name || '%%'
+                              OR f.source_area_name LIKE c.full_name || '%%'
+                              OR c.name = REPLACE(REPLACE(REPLACE(REPLACE(f.source_area_name, '특별자치도', ''), '특별자치시', ''), '광역시', ''), '특별시', '')
+                              OR REPLACE(REPLACE(REPLACE(REPLACE(f.source_area_name, '특별자치도', ''), '특별자치시', ''), '광역시', ''), '특별시', '') LIKE c.name || '%%'
+                              OR (f.source_area_name = '전라북도' AND c.name = '전북특별자치도')
+                              OR (f.source_area_name = '강원도' AND c.name = '강원특별자치도')
+                              OR (f.source_area_name LIKE '전라북도%%' AND c.name = '전북특별자치도')
+                              OR (f.source_area_name LIKE '강원도%%' AND c.name = '강원특별자치도')
+                          )
+                        ORDER BY
+                            CASE
+                                WHEN f.source_area_code LIKE c.sido_code || '%%' THEN 0
+                                WHEN f.source_area_name = c.name OR f.source_area_name = c.full_name THEN 1
+                                WHEN f.source_area_name LIKE c.name || '%%'
+                                  OR f.source_area_name LIKE c.full_name || '%%'
+                                  OR (f.source_area_name LIKE '전라북도%%' AND c.name = '전북특별자치도')
+                                  OR (f.source_area_name LIKE '강원도%%' AND c.name = '강원특별자치도') THEN 2
+                                ELSE 3
+                            END,
+                            c.area_code
+                        LIMIT 1
+                    ) s ON TRUE
+                    WHERE f.dataset_code = :datasetCode
+                      AND f.longitude IS NOT NULL
+                      AND f.latitude IS NOT NULL
+                ),
+                stats_rows AS (
+                    SELECT DISTINCT ON (fr.dataset_code, fr.area_code)
+                        fr.dataset_code,
+                        d.dataset_name,
+                        fr.area_code,
+                        fr.area_name,
+                        fr.full_name,
+                        fr.sido_code,
+                        COUNT(*) OVER (PARTITION BY fr.dataset_code, fr.area_code)::numeric AS numeric_value,
+                        COUNT(*) OVER ()::numeric AS total_count
+                    FROM feature_rows fr
+                    JOIN public.sd_dashboard_dataset d
+                        ON d.dataset_code = fr.dataset_code
+                    ORDER BY fr.dataset_code, fr.area_code
+                )
+                SELECT
+                    dataset_code,
+                    dataset_name,
+                    'FEATURE_COUNT' AS metric_code,
+                    '저장 피처 수' AS metric_name,
+                    area_code,
+                    area_name,
+                    full_name,
+                    'SIDO' AS area_level,
+                    sido_code AS source_area_code,
+                    NULL::date AS base_date,
+                    NULL::timestamp AS collected_at,
+                    numeric_value,
+                    total_count
+                FROM stats_rows
+                ORDER BY numeric_value DESC NULLS LAST, area_name
+                """.formatted(featureTable);
+
+        List<RegionStatRow> rows = jdbcTemplate.query(
+                sql,
+                new MapSqlParameterSource().addValue("datasetCode", datasetCode),
+                (rs, rowNum) -> mapRegionStatRow(rs));
+
+        if (rows.isEmpty()) {
+            return DashboardGisRegionStatsResponse.builder()
+                    .datasetCode(datasetCode)
+                    .metricCode("FEATURE_COUNT")
+                    .metricName("저장 피처 수")
+                    .totalCount(BigDecimal.ZERO)
+                    .items(List.of())
+                    .notice("아직 시도별로 집계할 저장 피처가 없습니다.")
+                    .build();
+        }
+
+        BigDecimal totalCount = rows.stream()
+                .map(RegionStatRow::totalCount)
+                .filter(value -> value != null && value.compareTo(BigDecimal.ZERO) > 0)
+                .findFirst()
+                .orElseGet(() -> rows.stream()
+                        .map(RegionStatRow::count)
+                        .filter(value -> value != null)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add));
+
+        List<DashboardGisRegionStatItem> items = new ArrayList<>();
+        for (RegionStatRow row : rows) {
+            BigDecimal count = row.count() == null ? BigDecimal.ZERO : row.count();
+            BigDecimal percent = totalCount.compareTo(BigDecimal.ZERO) > 0
+                    ? count.multiply(BigDecimal.valueOf(100)).divide(totalCount, 2, RoundingMode.HALF_UP)
+                    : BigDecimal.ZERO;
+            items.add(DashboardGisRegionStatItem.builder()
+                    .areaCode(row.areaCode())
+                    .areaName(row.areaName())
+                    .fullName(row.fullName())
+                    .areaLevel(row.areaLevel())
+                    .sourceAreaCode(row.sourceAreaCode())
+                    .count(count)
+                    .percent(percent)
+                    .build());
+        }
+
+        RegionStatRow first = rows.get(0);
+        return DashboardGisRegionStatsResponse.builder()
+                .datasetCode(first.datasetCode())
+                .datasetName(first.datasetName())
+                .metricCode(first.metricCode())
+                .metricName(first.metricName())
+                .totalCount(totalCount)
+                .items(items)
+                .notice("전체 보기 지도는 저장 피처 전체 건수를 시도 단위로 집계해 표시합니다.")
+                .build();
+    }
+
     public Map<String, Object> getDashboardGisObservations(String datasetCode, String areaCode, int limit) {
         String resolvedDatasetCode = normalizeRequired(datasetCode, "datasetCode는 필수입니다.");
         String resolvedAreaCode = resolveOptionalAreaCode(areaCode);
         int resolvedLimit = normalizeObservationLimit(limit);
 
-        List<Map<String, Object>> rows = findDashboardGisObservationRows(
-                resolvedDatasetCode,
-                resolvedAreaCode,
-                resolvedLimit);
-        if (rows.isEmpty() && resolvedAreaCode != null && MOIS_AVERAGE_AGE_DATASET_CODE.equals(resolvedDatasetCode)) {
-            rows = findAverageAgeFallbackRows(resolvedAreaCode);
-        }
+        List<Map<String, Object>> rows = resolvedAreaCode != null && MOIS_AVERAGE_AGE_DATASET_CODE.equals(resolvedDatasetCode)
+                ? findAverageAgeRows(resolvedAreaCode)
+                : findDashboardGisObservationRows(
+                        resolvedDatasetCode,
+                        resolvedAreaCode,
+                        resolvedLimit);
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("datasetCode", resolvedDatasetCode);
@@ -1215,50 +1385,97 @@ public class DashboardBoundaryService {
         }
     }
 
-    private List<Map<String, Object>> findAverageAgeFallbackRows(String areaCode) {
+    private List<Map<String, Object>> findAverageAgeRows(String areaCode) {
         try {
             AreaMeta areaMeta = findAreaMeta(areaCode);
             AreaPopulationChartResponse population = getAreaPopulation(areaCode, areaMeta.level(), null, "00");
-            BigDecimal weightedTotal = BigDecimal.ZERO;
-            BigDecimal populationTotal = BigDecimal.ZERO;
             List<PopulationChartDataset> datasets = population.getDatasets() == null
                     ? List.of()
                     : population.getDatasets();
-
-            for (PopulationChartDataset dataset : datasets) {
-                List<BigDecimal> values = dataset.getData() == null ? List.of() : dataset.getData();
-                for (int index = 0; index < values.size() && index < POPULATION_AGE_MIDPOINTS.size(); index++) {
-                    BigDecimal count = values.get(index) == null ? BigDecimal.ZERO : values.get(index);
-                    weightedTotal = weightedTotal.add(count.multiply(POPULATION_AGE_MIDPOINTS.get(index)));
-                    populationTotal = populationTotal.add(count);
-                }
+            List<BigDecimal> maleValues = datasets.size() > 0 && datasets.get(0).getData() != null
+                    ? datasets.get(0).getData()
+                    : List.of();
+            List<BigDecimal> femaleValues = datasets.size() > 1 && datasets.get(1).getData() != null
+                    ? datasets.get(1).getData()
+                    : List.of();
+            List<BigDecimal> totalValues = new ArrayList<>();
+            int maxSize = Math.max(maleValues.size(), femaleValues.size());
+            for (int index = 0; index < maxSize; index++) {
+                totalValues.add(valueAt(maleValues, index).add(valueAt(femaleValues, index)));
             }
 
-            if (populationTotal.compareTo(BigDecimal.ZERO) <= 0) {
+            BigDecimal totalAverageAge = weightedAverageAge(totalValues);
+            BigDecimal maleAverageAge = weightedAverageAge(maleValues);
+            BigDecimal femaleAverageAge = weightedAverageAge(femaleValues);
+
+            if (totalAverageAge == null && maleAverageAge == null && femaleAverageAge == null) {
                 return List.of();
             }
 
-            BigDecimal averageAge = weightedTotal.divide(populationTotal, 1, RoundingMode.HALF_UP);
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("datasetCode", MOIS_AVERAGE_AGE_DATASET_CODE);
-            row.put("datasetName", "성별 주민등록 평균연령");
-            row.put("metricCode", "METRIC_001");
-            row.put("metricName", "전체 평균연령");
-            row.put("areaCode", population.getAreaCode());
-            row.put("areaLevel", areaMeta.level());
-            row.put("sourceAreaCode", areaCode);
-            row.put("label", population.getFullName() != null ? population.getFullName() : population.getAreaName());
-            row.put("baseDate", population.getBaseDate());
-            row.put("baseHour", population.getHour());
-            row.put("collectedAt", null);
-            row.put("value", averageAge);
-            row.put("unit", "세");
-            row.put("totalRowCount", 1L);
-            row.put("totalNumericValue", averageAge);
-            return List.of(row);
+            List<Map<String, Object>> rows = new ArrayList<>();
+            addAverageAgeRow(rows, population, areaMeta, "AVG_AGE_TOTAL", "전체 평균연령", "전체", totalAverageAge);
+            addAverageAgeRow(rows, population, areaMeta, "AVG_AGE_MALE", "남성 평균연령", "남성", maleAverageAge);
+            addAverageAgeRow(rows, population, areaMeta, "AVG_AGE_FEMALE", "여성 평균연령", "여성", femaleAverageAge);
+            BigDecimal totalNumericValue = rows.stream()
+                    .map(row -> (BigDecimal) row.get("value"))
+                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            for (Map<String, Object> row : rows) {
+                row.put("totalRowCount", rows.size());
+                row.put("totalNumericValue", totalNumericValue);
+            }
+            return rows;
         } catch (ResponseStatusException exception) {
             return List.of();
         }
+    }
+
+    private BigDecimal valueAt(List<BigDecimal> values, int index) {
+        if (index < 0 || index >= values.size() || values.get(index) == null) {
+            return BigDecimal.ZERO;
+        }
+        return values.get(index);
+    }
+
+    private BigDecimal weightedAverageAge(List<BigDecimal> values) {
+        BigDecimal weightedTotal = BigDecimal.ZERO;
+        BigDecimal populationTotal = BigDecimal.ZERO;
+        for (int index = 0; index < values.size() && index < POPULATION_AGE_MIDPOINTS.size(); index++) {
+            BigDecimal count = values.get(index) == null ? BigDecimal.ZERO : values.get(index);
+            weightedTotal = weightedTotal.add(count.multiply(POPULATION_AGE_MIDPOINTS.get(index)));
+            populationTotal = populationTotal.add(count);
+        }
+        if (populationTotal.compareTo(BigDecimal.ZERO) <= 0) {
+            return null;
+        }
+        return weightedTotal.divide(populationTotal, 1, RoundingMode.HALF_UP);
+    }
+
+    private void addAverageAgeRow(
+            List<Map<String, Object>> rows,
+            AreaPopulationChartResponse population,
+            AreaMeta areaMeta,
+            String metricCode,
+            String metricName,
+            String label,
+            BigDecimal value) {
+        if (value == null) {
+            return;
+        }
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("datasetCode", MOIS_AVERAGE_AGE_DATASET_CODE);
+        row.put("datasetName", "성별 주민등록 평균연령");
+        row.put("metricCode", metricCode);
+        row.put("metricName", metricName);
+        row.put("areaCode", population.getAreaCode());
+        row.put("areaLevel", areaMeta.level());
+        row.put("sourceAreaCode", population.getAreaCode());
+        row.put("label", label);
+        row.put("baseDate", population.getBaseDate());
+        row.put("baseHour", population.getHour());
+        row.put("collectedAt", null);
+        row.put("value", value);
+        row.put("unit", "세");
+        rows.add(row);
     }
 
     private String getSidoBoundaries(String sidoCode, Bbox bbox) {
@@ -2200,6 +2417,21 @@ public class DashboardBoundaryService {
             return 12;
         }
         return Math.min(limit, 50);
+    }
+
+    private String dashboardFeatureTable(String datasetCode) {
+        return switch (datasetCode) {
+            case "STANDARD_LIBRARY_MAIN" -> "public.sd_dashboard_standard_library_feature";
+            case "STANDARD_URBAN_PARK_MAIN" -> "public.sd_dashboard_standard_urban_park_feature";
+            case "STANDARD_BUS_STOP_MAIN" -> "public.sd_dashboard_standard_bus_stop_feature";
+            default -> null;
+        };
+    }
+
+    private String emptyFeatureCollection() {
+        return """
+                {"type":"FeatureCollection","features":[]}
+                """;
     }
 
     private DashboardGisDataSourceResponse mapDashboardGisDataSource(ResultSet rs) throws SQLException {
