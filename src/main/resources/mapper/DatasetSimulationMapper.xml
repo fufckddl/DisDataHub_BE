@@ -113,6 +113,7 @@
             coalesce(round(avg(r.distance_meters)::numeric, 2), 0)::double precision as average_nearby_count,
             coalesce(round(max(r.distance_meters))::int, 0) as max_nearby_count
         from sd_gis_dataset d
+        left join ranked r on true
         where d.dataset_id = #{datasetId}
         group by d.title, d.spatial_type
     </select>
