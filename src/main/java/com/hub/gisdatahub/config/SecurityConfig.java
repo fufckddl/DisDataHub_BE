@@ -111,6 +111,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/download/datasets", "/api/download/datasets/*").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/download/datasets/*/preview-geojson").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/download/datasets/*/download").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/download/simulation/**").permitAll() 
                         
                         // 게시글 목록·상세 조회는 비로그인도 가능
                         // NOTE: 일부 환경에서 requestMatchers(HttpMethod.GET, "/api/articles/**")가 "/api/articles/{id}"에 매칭되지 않는 이슈가 있어
